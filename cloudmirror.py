@@ -81,8 +81,18 @@ def is_rclone_running():
     global rclone_pid
     if rclone_pid:
         try:
-            os.kill(rclone_pid, 0)
-            return True
+            pid, status = os.waitpid(rclone_pid, os.WNOHANG)
+            if pid == 0:
+                return True  # still running
+            rclone_pid = None  # reaped zombie
+            return False
+        except ChildProcessError:
+            # Not our child - fall back to kill check
+            try:
+                os.kill(rclone_pid, 0)
+                return True
+            except (ProcessLookupError, OSError):
+                rclone_pid = None
         except (ProcessLookupError, OSError):
             rclone_pid = None
     return False
@@ -551,25 +561,29 @@ def scan_full_log():
     elif sessions:
         original_total = max((s.get("session_total_bytes", 0) or 0) for s in sessions)
         original_files = max((s.get("final_files_total", 0) or 0) for s in sessions)
-        # Fetch real size in background
-        def _fetch_source_size():
-            try:
-                src = RCLONE_CMD[2] if len(RCLONE_CMD) > 2 else ""
-                if not src:
-                    return
-                result = subprocess.run(
-                    ["rclone", "size", src, "--json"],
-                    capture_output=True, text=True, timeout=600
-                )
-                if result.returncode == 0:
-                    data = json.loads(result.stdout)
-                    with state_lock:
-                        state["source_size_bytes"] = data.get("bytes", 0)
-                        state["source_size_files"] = data.get("count", 0)
-                    save_state(state)
-            except Exception:
-                pass
-        threading.Thread(target=_fetch_source_size, daemon=True).start()
+        # Fetch real size in background (only once)
+        if not getattr(scan_full_log, '_size_fetching', False):
+            scan_full_log._size_fetching = True
+            def _fetch_source_size():
+                try:
+                    src = RCLONE_CMD[2] if len(RCLONE_CMD) > 2 else ""
+                    if not src:
+                        return
+                    result = subprocess.run(
+                        ["rclone", "size", src, "--json"],
+                        capture_output=True, text=True, timeout=600
+                    )
+                    if result.returncode == 0:
+                        data = json.loads(result.stdout)
+                        with state_lock:
+                            state["source_size_bytes"] = data.get("bytes", 0)
+                            state["source_size_files"] = data.get("count", 0)
+                        save_state(state)
+                except Exception:
+                    pass
+                finally:
+                    scan_full_log._size_fetching = False
+            threading.Thread(target=_fetch_source_size, daemon=True).start()
 
     with state_lock:
         state["sessions"] = [
@@ -1289,6 +1303,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="session-badge" id="sessionBadge">Session 1</div>
     <button class="ctrl-btn pause" id="btnPause" onclick="doAction('pause')">Pause</button>
     <button class="ctrl-btn resume" id="btnResume" onclick="doAction('resume')" style="display:none">Resume</button>
+    <button class="ctrl-btn" id="btnCancel" onclick="cancelTransfer()" style="background:rgba(239,68,68,0.08);color:var(--red);border:1px solid rgba(239,68,68,0.2);font-size:0.65rem;">Cancel</button>
     <a href="/wizard" class="ctrl-btn" style="background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);text-decoration:none;padding:6px 18px;font-size:0.75rem;">New Transfer</a>
   </div>
   <div class="header-right" style="display:flex;align-items:center;gap:12px;">
@@ -1667,6 +1682,12 @@ async function refresh() {
       statusText.textContent = 'Starting...';
       badge.querySelector('.status-dot').style.animation = '';
       updateButtons(true);
+    } else if (d.finished && !d.rclone_running && d.global_pct < 100) {
+      badge.className = 'status-badge stopped';
+      statusText.textContent = 'Stopped';
+      badge.querySelector('.status-dot').style.animation = 'none';
+      badge.querySelector('.status-dot').style.background = 'var(--red)';
+      updateButtons(false);
     } else if (d.finished) {
       badge.className = 'status-badge paused';
       statusText.textContent = 'Paused';
@@ -1983,6 +2004,14 @@ function showToast(msg, color) {
   t.style.borderColor = color || 'var(--blue)';
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+async function cancelTransfer() {
+  if (!confirm('Stop the transfer and start a new one?')) return;
+  try {
+    await fetch('/api/pause', {method:'POST'});
+  } catch(e) {}
+  window.location.href = '/wizard';
 }
 
 async function doAction(action) {
@@ -2385,6 +2414,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
       <div style="margin-top: 16px; font-size: 0.75rem; color: var(--text-muted);">
         Supports Google Drive, OneDrive, Dropbox, S3, and more
       </div>
+      <div id="welcomeRcloneCheck" style="margin-top:12px;font-size:0.75rem;text-align:center;"></div>
     </div>
   </div>
 
@@ -2432,9 +2462,9 @@ WIZARD_HTML = r'''<!DOCTYPE html>
         <input class="form-input" id="sourcePathInput" type="text" placeholder="e.g. /Users/you/Documents">
         <div class="form-hint">The folder on your computer where your files are stored.</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
-          <button type="button" class="btn-secondary" style="padding:6px 12px;font-size:0.7rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Desktop');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Desktop</button>
-          <button type="button" class="btn-secondary" style="padding:6px 12px;font-size:0.7rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Documents');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Documents</button>
-          <button type="button" class="btn-secondary" style="padding:6px 12px;font-size:0.7rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Downloads');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Downloads</button>
+          <button type="button" class="btn-secondary" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Desktop');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Desktop</button>
+          <button type="button" class="btn-secondary" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Documents');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Documents</button>
+          <button type="button" class="btn-secondary" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Downloads');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Downloads</button>
         </div>
       </div>
     </div>
@@ -2495,8 +2525,8 @@ WIZARD_HTML = r'''<!DOCTYPE html>
         <input class="form-input" id="destPathInput" type="text" placeholder="e.g. /Users/you/Desktop/Backup">
         <div class="form-hint">Where to save the copied files on your computer.</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
-          <button type="button" style="padding:6px 12px;font-size:0.7rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);" onclick="document.getElementById('destPathInput').value=((window._homeDir||'/tmp')+'/Desktop/CloudMirror-Backup');document.getElementById('destPathInput').dispatchEvent(new Event('input'))">Desktop/CloudMirror-Backup</button>
-          <button type="button" style="padding:6px 12px;font-size:0.7rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);" onclick="document.getElementById('destPathInput').value=((window._homeDir||'/tmp')+'/Documents/CloudMirror-Backup');document.getElementById('destPathInput').dispatchEvent(new Event('input'))">Documents/CloudMirror-Backup</button>
+          <button type="button" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('destPathInput').value=((window._homeDir||'/tmp')+'/Desktop/CloudMirror-Backup');document.getElementById('destPathInput').dispatchEvent(new Event('input'))">Desktop/CloudMirror-Backup</button>
+          <button type="button" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('destPathInput').value=((window._homeDir||'/tmp')+'/Documents/CloudMirror-Backup');document.getElementById('destPathInput').dispatchEvent(new Event('input'))">Documents/CloudMirror-Backup</button>
         </div>
       </div>
     </div>
@@ -2568,10 +2598,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
       <!-- Filled dynamically -->
     </div>
     <div id="rcloneStatus" style="text-align:center; margin-bottom:16px;"></div>
-    <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:16px;text-align:center;">
-      When you click Connect, a browser tab will open for authentication.<br>
-      Sign in to authorize CloudMirror, then return here.
-    </div>
+    <div id="connectHint" style="font-size:0.8rem;color:var(--text-dim);margin-bottom:16px;text-align:center;"></div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goTo(4)">Back</button>
       <button class="btn btn-primary" id="connectNext" onclick="goTo(6)" disabled>Next</button>
@@ -2640,6 +2667,17 @@ function toggleTheme() {
   }
 })();
 
+// Fetch home directory and check rclone on page load
+(function() {
+  fetch('/api/wizard/status').then(r => r.json()).then(d => {
+    if (d.home_dir) window._homeDir = d.home_dir;
+    const el = document.getElementById('welcomeRcloneCheck');
+    if (!d.rclone_installed) {
+      el.innerHTML = '<span style="color:var(--orange)">rclone is not installed. It will be installed automatically when you proceed.</span>';
+    }
+  }).catch(() => {});
+})();
+
 // Navigation
 function goTo(step) {
   if (step >= 3 && !sourceProvider) return;
@@ -2665,7 +2703,41 @@ function goTo(step) {
     if (i === step - 1) d.classList.add('active');
   });
   currentStep = step;
+  // Save wizard state to survive page refresh
+  try {
+    sessionStorage.setItem('cm_wizard', JSON.stringify({
+      step: currentStep, sourceProvider, sourceName, sourceDisplayName,
+      destProvider, destName, destDisplayName, selectedSpeed
+    }));
+  } catch(e) {}
 }
+
+// Restore wizard state after refresh
+(function() {
+  try {
+    const saved = sessionStorage.getItem('cm_wizard');
+    if (!saved) return;
+    const s = JSON.parse(saved);
+    if (!s.sourceProvider) return;
+    sourceProvider = s.sourceProvider;
+    sourceName = s.sourceName || '';
+    sourceDisplayName = s.sourceDisplayName || '';
+    destProvider = s.destProvider;
+    destName = s.destName || '';
+    destDisplayName = s.destDisplayName || '';
+    selectedSpeed = s.selectedSpeed || '8';
+    // Re-select cards visually
+    if (sourceProvider) {
+      const sc = document.querySelector('#sourceGrid [data-provider="'+sourceProvider+'"]');
+      if (sc) sc.classList.add('selected');
+    }
+    if (destProvider) {
+      const dc = document.querySelector('#destGrid [data-provider="'+destProvider+'"]');
+      if (dc) dc.classList.add('selected');
+    }
+    if (s.step > 1) goTo(s.step);
+  } catch(e) {}
+})();
 
 // Source selection
 function selectSource(card) {
@@ -2732,6 +2804,22 @@ function selectSpeed(card, val) {
 async function buildConnectStep() {
   const list = document.getElementById('connectList');
   list.innerHTML = '';
+
+  // Set hint based on provider types
+  const oauthProviders = ['drive','onedrive','dropbox'];
+  const hasOAuth = oauthProviders.includes(sourceProvider) || oauthProviders.includes(destProvider);
+  const credProviders = ['mega','protondrive','s3'];
+  const hasCred = credProviders.includes(sourceProvider) || credProviders.includes(destProvider);
+  const hint = document.getElementById('connectHint');
+  if (hasOAuth && hasCred) {
+    hint.innerHTML = 'Some services will open a browser for sign-in. Others will ask for credentials below.';
+  } else if (hasOAuth) {
+    hint.innerHTML = 'A browser tab will open for authentication. Sign in to authorize CloudMirror, then return here.';
+  } else if (hasCred) {
+    hint.innerHTML = 'Enter your credentials below to connect your accounts.';
+  } else {
+    hint.innerHTML = '';
+  }
 
   // Check rclone first
   const statusEl = document.getElementById('rcloneStatus');
