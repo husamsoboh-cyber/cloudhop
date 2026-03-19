@@ -96,6 +96,35 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
 
+    def _send_404(self) -> None:
+        """Return a styled 404 HTML page."""
+        self.send_response(404)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(
+            b"<!DOCTYPE html><html><head>"
+            b'<meta charset="UTF-8">'
+            b'<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+            b"<title>404 - CloudHop</title>"
+            b"<style>"
+            b"body{background:#0b0d13;color:#f0f1f3;font-family:-apple-system,sans-serif;"
+            b"display:flex;align-items:center;justify-content:center;min-height:100vh;"
+            b"margin:0;text-align:center}"
+            b".c{max-width:400px}"
+            b".t{font-size:4rem;margin-bottom:16px;opacity:.3}"
+            b".h{font-size:1.5rem;font-weight:700;margin-bottom:8px}"
+            b".p{color:#6b6f7b;margin-bottom:24px}"
+            b"a{color:#6366f1;text-decoration:none}"
+            b"a:hover{text-decoration:underline}"
+            b"</style></head><body>"
+            b'<div class="c">'
+            b'<div class="t">404</div>'
+            b'<div class="h">Page not found</div>'
+            b'<p class="p">The page you are looking for does not exist.</p>'
+            b'<a href="/">Go to CloudHop</a>'
+            b"</div></body></html>"
+        )
+
     def _serve_static(self, filename: str) -> None:
         """Serve static CSS/JS files."""
         static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -107,8 +136,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not os.path.exists(filepath):
-            self.send_response(404)
-            self.end_headers()
+            self._send_404()
             return
         ext = filename.rsplit(".", 1)[-1]
         content_types = {"css": "text/css", "js": "application/javascript", "svg": "image/svg+xml"}
@@ -225,8 +253,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 html = render("wizard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
                 self._send_html(html)
         else:
-            self.send_response(404)
-            self.end_headers()
+            self._send_404()
 
     # ── POST routes ──────────────────────────────────────────────────────
 
@@ -373,8 +400,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             result = self.manager.set_bandwidth(limit)
             self._send_json(result)
         else:
-            self.send_response(404)
-            self.end_headers()
+            self._send_404()
 
     # ── OPTIONS (CORS preflight) ─────────────────────────────────────────
 

@@ -281,7 +281,27 @@ function setHTML(id, val) { const el = $(id); if (el) el.innerHTML = val; }
 function setDisplay(id, val) { const el = $(id); if (el) el.style.display = val; }
 function setWidth(id, val) { const el = $(id); if (el) el.style.width = val; }
 
+function playCompleteSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 - pleasant chord
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.5);
+      osc.start(ctx.currentTime + i * 0.15);
+      osc.stop(ctx.currentTime + i * 0.15 + 0.5);
+    });
+  } catch(e) {}
+}
+
 function showCompletionScreen(d) {
+    playCompleteSound();
     const overlay = document.createElement('div');
     overlay.id = 'completionOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9998;backdrop-filter:blur(8px);';
@@ -333,6 +353,7 @@ async function refresh() {
     if (!res.ok) return;
     const d = await res.json();
     failCount = 0;
+    document.querySelectorAll('.loading-pulse').forEach(el => el.classList.remove('loading-pulse'));
     setDisplay('connLost', 'none');
     const header = document.querySelector('.header');
     if (header) header.style.top = '0';

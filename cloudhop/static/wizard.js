@@ -154,6 +154,43 @@ async function goTo(step) {
     if (i < step - 1) d.classList.add('done');
     if (i === step - 1) d.classList.add('active');
   });
+
+  // Restore previous selections when navigating back
+  if (step === 2 && sourceProvider) {
+    const sc = document.querySelector('#sourceGrid [data-provider="'+sourceProvider+'"]');
+    if (sc && !sc.classList.contains('selected')) {
+      document.querySelectorAll('#sourceGrid .provider-card').forEach(c => c.classList.remove('selected'));
+      sc.classList.add('selected');
+    }
+    document.getElementById('sourceLocalPath').classList.toggle('show', sourceProvider === 'local' || sourceProvider === 'icloud');
+    document.getElementById('sourceOtherName').classList.toggle('show', sourceProvider === 'other');
+    document.getElementById('sourceNext').disabled = false;
+  }
+  if (step === 3 && destProvider) {
+    const dc = document.querySelector('#destGrid [data-provider="'+destProvider+'"]');
+    if (dc && !dc.classList.contains('selected')) {
+      document.querySelectorAll('#destGrid .provider-card').forEach(c => c.classList.remove('selected'));
+      dc.classList.add('selected');
+    }
+    document.getElementById('destLocalPath').classList.toggle('show', destProvider === 'local' || destProvider === 'icloud');
+    document.getElementById('destOtherName').classList.toggle('show', destProvider === 'other');
+    document.getElementById('destNext').disabled = false;
+  }
+  if (step === 4 && selectedSpeed) {
+    document.querySelectorAll('.speed-card').forEach(c => {
+      c.classList.remove('selected');
+      c.setAttribute('aria-checked', 'false');
+    });
+    document.querySelectorAll('.speed-card').forEach(c => {
+      const radio = c.querySelector('input[type="radio"]');
+      if (radio && radio.value === selectedSpeed) {
+        c.classList.add('selected');
+        c.setAttribute('aria-checked', 'true');
+        radio.checked = true;
+      }
+    });
+  }
+
   currentStep = step;
   // Save wizard state to survive page refresh
   try {
