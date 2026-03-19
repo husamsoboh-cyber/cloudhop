@@ -344,7 +344,7 @@ async function refresh() {
       if (btnResume2) btnResume2.style.display = 'none';
       const btnPause2 = document.getElementById('btnPause2');
       if (btnPause2) btnPause2.style.display = 'none';
-      if (!completionShown && pct >= 100) {
+      if (!completionShown && d.global_pct >= 100) {
           completionShown = true;
           showCompletionScreen(d);
       }
