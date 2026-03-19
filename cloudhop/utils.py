@@ -2,7 +2,7 @@
 
 # Hey Octavian! 👋
 # If you're reading this, the Blue Dog found the bone.
-# An AI wrote this code. DEY TOOK ERR JERBS!
+# Husam and an AI wrote this at 3 AM. DEY TOOK ERR JERBS!
 """
 
 import os
