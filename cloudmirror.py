@@ -10,11 +10,15 @@ import time
 import signal
 import subprocess
 import threading
+import secrets
 import platform
 import shutil
 import hashlib
+import hmac
 import webbrowser
 from datetime import datetime, timedelta
+
+CSRF_TOKEN = secrets.token_hex(32)
 
 def validate_rclone_input(value, field_name):
     """Reject inputs that could be interpreted as rclone flags.
@@ -28,6 +32,15 @@ def validate_rclone_input(value, field_name):
     if value.startswith("--") or value.startswith("-"):
         return False
     if "\n" in value or "\r" in value or "\x00" in value:
+        return False
+    return True
+
+
+def validate_exclude_pattern(value):
+    """Stricter validation for exclude patterns - also rejects shell glob injection chars."""
+    if not validate_rclone_input(value, "exclude"):
+        return False
+    if any(c in value for c in ('{', '}', '[', ']')):
         return False
     return True
 
@@ -56,13 +69,23 @@ def _sanitize_rclone_error(stderr):
 RE_TRANSFERRED_BYTES = re.compile(r"Transferred:\s+([\d.]+\s+\S+)\s*/\s*([\d.]+\s+\S+),\s*(\d+)%,\s*([\d.]+\s*\S+/s)")
 RE_TRANSFERRED_FILES = re.compile(r"Transferred:\s+(\d+)\s*/\s*(\d+),\s*(\d+)%")
 RE_ELAPSED = re.compile(r"Elapsed time:\s*(.+)")
-RE_CHECKS = re.compile(r"Checks:\s+(\d+)\s*/\s*(\d+)")
 RE_ERRORS = re.compile(r"Errors:\s+(\d+)")
 RE_SPEED = re.compile(r"([\d.]+)\s*([KMGT]i?B)/s", re.I)
 RE_COPIED = re.compile(r"INFO\s+:\s+(.+?):\s+Copied\s+\(new\)")
 RE_ACTIVE = re.compile(r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s),\s*(\S+)")
 RE_ACTIVE2 = re.compile(r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s)")
 RE_ACTIVE3 = re.compile(r"\*\s+(.+?):\s+transferring")
+RE_FULL_TRANSFER_ETA = re.compile(r"Transferred:\s+([\d.]+\s+\S+)\s*/\s*([\d.]+\s+\S+),\s*(\d+)%,\s*([\d.]+\s*\S+/s),\s*ETA\s*(\S+)")
+RE_CHECKS_LISTED = re.compile(r"Checks:\s+(\d+)\s*/\s*(\d+).+Listed\s+(\d+)")
+RE_COPIED_WITH_TS = re.compile(r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})\s+INFO\s+:\s+(.+?):\s+Copied\s+\(new\)")
+RE_ERROR_MSG = re.compile(r"\d{2}:\d{2}:\d{2}\s+ERROR\s+:\s+(.+)")
+RE_TIMESTAMP = re.compile(r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})")
+RE_FILES_HIST = re.compile(r"Transferred:\s+(\d+)\s*/\s*\d+,\s*\d+%")
+
+RE_SIZE_VALUE = re.compile(r"([\d.]+)\s*(\S+)")
+RE_HOURS = re.compile(r"(\d+)h")
+RE_MINUTES = re.compile(r"(\d+)m")
+RE_SECONDS = re.compile(r"([\d.]+)s")
 
 _CM_DIR = os.path.join(os.path.expanduser("~"), ".cloudmirror")
 os.makedirs(_CM_DIR, mode=0o700, exist_ok=True)
@@ -70,6 +93,22 @@ LOG_FILE = os.path.join(_CM_DIR, "cloudmirror.log")
 STATE_FILE = os.path.join(_CM_DIR, "cloudmirror_state.json")
 PORT = 8787
 TRANSFER_LABEL = "Source -> Destination"
+LOG_TAIL_BYTES = 16000
+RECENT_FILES_INITIAL_CHUNK = 100000
+RECENT_FILES_MAX_CHUNK = 2000000
+ERROR_TAIL_BYTES = 100000
+CHART_DOWNSAMPLE_TARGET = 200
+SCANNER_INTERVAL_SEC = 30
+MIN_SESSION_ELAPSED_SEC = 60
+MAX_REQUEST_BODY_BYTES = 10240
+MIN_DOWNTIME_GAP_SEC = 60
+RCLONE_SIZE_TIMEOUT_SEC = 600
+RCLONE_CONFIG_TIMEOUT_SEC = 120
+RCLONE_CHECK_TIMEOUT_SEC = 30
+RCLONE_PREVIEW_TIMEOUT_SEC = 60
+RCLONE_INSTALL_TIMEOUT_SEC = 120
+MAX_TRANSFERS = 64
+MAX_HISTORY_ENTRIES = 50000
 
 # rclone command - set dynamically by wizard or CLI args
 RCLONE_CMD = []
@@ -338,7 +377,7 @@ def save_state(state):
 
 def to_bytes(size_str):
     """Convert '90.054 GiB' or '103.010 MiB' to bytes."""
-    m = re.match(r"([\d.]+)\s*(\S+)", size_str.strip())
+    m = RE_SIZE_VALUE.match(size_str.strip())
     if not m:
         return 0
     val = float(m.group(1))
@@ -370,13 +409,13 @@ def fmt_bytes(b):
 def parse_elapsed(s):
     """Parse '14h59m30.0s' or '28m0.0s' to seconds."""
     sec = 0
-    m = re.findall(r"(\d+)h", s)
+    m = RE_HOURS.findall(s)
     if m:
         sec += int(m[0]) * 3600
-    m = re.findall(r"(\d+)m", s)
+    m = RE_MINUTES.findall(s)
     if m:
         sec += int(m[0]) * 60
-    m = re.findall(r"([\d.]+)s", s)
+    m = RE_SECONDS.findall(s)
     if m:
         sec += float(m[0])
     return sec
@@ -402,9 +441,22 @@ def fmt_duration(sec):
     return " ".join(parts)
 
 
+def downsample(arr, target=CHART_DOWNSAMPLE_TARGET):
+    """Reduce a list to approximately ``target`` evenly-spaced samples."""
+    if len(arr) <= target:
+        return arr
+    step = len(arr) / target
+    out = []
+    for i in range(target):
+        idx = int(i * step)
+        out.append(arr[idx])
+    return out
+
+
 # ─── Log scanner with session detection ──────────────────────────────────────
 
 state_lock = threading.Lock()
+_transfer_lock = threading.Lock()
 state = load_state()
 
 
@@ -421,28 +473,86 @@ def scan_full_log():
     if not os.path.exists(LOG_FILE):
         return
 
+    # Incremental scanning: on first call read everything, on subsequent
+    # calls only read from the last offset and carry forward running state.
+    with state_lock:
+        last_offset = state.get("last_scan_offset", 0)
+
     with open(LOG_FILE, "r", errors="replace") as f:
+        if last_offset > 0:
+            f.seek(last_offset)
         content = f.read()
+        new_offset = f.tell()
+
+    # If we seeked to a mid-file offset, we may have landed mid-line.
+    # Discard the partial first line to avoid corrupt parsing.
+    if last_offset > 0 and content:
+        first_nl = content.find('\n')
+        if first_nl >= 0:
+            content = content[first_nl + 1:]  # skip partial first line
+        else:
+            content = ''  # entire read was a partial line, skip it
+
+    # If nothing new was written, skip processing.
+    if not content and last_offset > 0:
+        return
 
     lines = content.split("\n")
 
-    sessions = []
-    current_session = None
-    prev_elapsed = -1
-    file_types = {}
-    total_copied = 0
-    last_ts = None
-    prev_ts = None
-
-    # Snapshot values from just before a session boundary, so the previous
-    # session's final stats are captured before rclone resets its counters.
-    prev_transferred_bytes = 0
-    prev_total_bytes = 0
-    prev_files_done = 0
-    prev_files_total = 0
+    # Restore running state from previous incremental scans.
+    if last_offset > 0:
+        with state_lock:
+            if not isinstance(state.get("_running_sessions"), list):
+                state["_running_sessions"] = []
+            sessions = list(state.get("_running_sessions", []))
+            current_session = state.get("_running_current_session", None)
+            if current_session is not None and not isinstance(current_session, dict):
+                current_session = None
+            if current_session is not None:
+                current_session = dict(current_session)
+            prev_elapsed = state.get("_running_prev_elapsed", -1)
+            file_types = dict(state.get("all_file_types", {}))
+            total_copied = state.get("total_copied_count", 0)
+            last_ts = state.get("_running_last_ts", None)
+            prev_ts = state.get("_running_prev_ts", None)
+            prev_transferred_bytes = state.get("_running_prev_transferred_bytes", 0)
+            prev_total_bytes = state.get("_running_prev_total_bytes", 0)
+            prev_files_done = state.get("_running_prev_files_done", 0)
+            prev_files_total = state.get("_running_prev_files_total", 0)
+            # Chart history running state
+            speed_hist = list(state.get("_running_speed_hist", []))
+            pct_hist = list(state.get("_running_pct_hist", []))
+            files_hist = list(state.get("_running_files_hist", []))
+            chart_prev_el = state.get("_running_chart_prev_el", -1)
+            cumul_bytes_offset = state.get("_running_cumul_bytes_offset", 0)
+            cumul_files_offset = state.get("_running_cumul_files_offset", 0)
+            session_max_bytes = state.get("_running_session_max_bytes", 0)
+            session_max_files = state.get("_running_session_max_files", 0)
+            first_session_total = state.get("_running_first_session_total", 0)
+    else:
+        sessions = []
+        current_session = None
+        prev_elapsed = -1
+        file_types = {}
+        total_copied = 0
+        last_ts = None
+        prev_ts = None
+        prev_transferred_bytes = 0
+        prev_total_bytes = 0
+        prev_files_done = 0
+        prev_files_total = 0
+        speed_hist = []
+        pct_hist = []
+        files_hist = []
+        chart_prev_el = -1
+        cumul_bytes_offset = 0
+        cumul_files_offset = 0
+        session_max_bytes = 0
+        session_max_files = 0
+        first_session_total = 0
 
     for line in lines:
-        ts_match = re.match(r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})", line)
+        ts_match = RE_TIMESTAMP.match(line)
         if ts_match:
             prev_ts = last_ts
             last_ts = ts_match.group(1)
@@ -459,6 +569,22 @@ def scan_full_log():
                 if last_ts:
                     current_session["last_ts"] = last_ts
 
+            # Chart history: speed and percentage (reuse cur_transferred/cur_total from above)
+            if first_session_total == 0:
+                first_session_total = cur_total
+            session_max_bytes = max(session_max_bytes, cur_transferred)
+            if first_session_total > 0:
+                global_pct_val = (cumul_bytes_offset + cur_transferred) / first_session_total * 100
+                pct_hist.append(round(min(global_pct_val, 100), 1))
+            spd_str = m_data.group(4)
+            sm = RE_SPEED.match(spd_str)
+            if sm:
+                v = float(sm.group(1))
+                u = sm.group(2).upper()
+                if u.startswith("K"): v /= 1024
+                elif u.startswith("G"): v *= 1024
+                speed_hist.append(round(v, 3))
+
         m_files = RE_TRANSFERRED_FILES.search(line)
         if m_files:
             if current_session is not None:
@@ -467,15 +593,33 @@ def scan_full_log():
                 current_session["final_files_done"] = int(m_files.group(1))
                 current_session["final_files_total"] = int(m_files.group(2))
 
+        # Chart history: files
+        m_fl = RE_FILES_HIST.search(line)
+        if m_fl:
+            cur_files_chart = int(m_fl.group(1))
+            session_max_files = max(session_max_files, cur_files_chart)
+            files_hist.append(cumul_files_offset + cur_files_chart)
+
         m_elapsed = RE_ELAPSED.search(line)
         if m_elapsed:
             elapsed_str = m_elapsed.group(1).strip()
             elapsed_sec = parse_elapsed(elapsed_str)
 
+            # Chart history: session boundary detection for charts
+            if chart_prev_el > MIN_SESSION_ELAPSED_SEC and elapsed_sec < chart_prev_el * 0.5:
+                cumul_bytes_offset += session_max_bytes
+                cumul_files_offset += session_max_files
+                session_max_bytes = 0
+                session_max_files = 0
+                speed_hist.append(None)
+                pct_hist.append(None)
+                files_hist.append(None)
+            chart_prev_el = elapsed_sec
+
             # Session boundary: elapsed dropped >50% means rclone restarted.
             # Finalize the previous session with its pre-reset values and
             # back-calculate the new session's true start time.
-            if prev_elapsed > 60 and elapsed_sec < prev_elapsed * 0.5:
+            if prev_elapsed > MIN_SESSION_ELAPSED_SEC and elapsed_sec < prev_elapsed * 0.5:
                 if current_session:
                     current_session["end_time"] = current_session.get("last_ts", "")
                     current_session["final_elapsed_sec"] = prev_elapsed
@@ -537,14 +681,18 @@ def scan_full_log():
             else:
                 file_types["other"] = file_types.get("other", 0) + 1
 
+    # For cumulative calculation, build a finalized session list.
+    # current_session is kept separately as running state for incremental scans.
+    finalized_sessions = list(sessions)
     if current_session:
-        current_session["end_time"] = current_session.get("last_ts", "")
-        sessions.append(current_session)
+        cs_copy = dict(current_session)
+        cs_copy["end_time"] = cs_copy.get("last_ts", "")
+        finalized_sessions.append(cs_copy)
 
     cumulative_bytes = 0
     cumulative_files = 0
     cumulative_elapsed = 0
-    for s in sessions[:-1]:
+    for s in finalized_sessions[:-1]:
         cumulative_bytes += s.get("final_transferred_bytes", 0)
         cumulative_files += s.get("final_files_done", 0)
         cumulative_elapsed += s.get("final_elapsed_sec", 0)
@@ -558,9 +706,9 @@ def scan_full_log():
     if cached_total > 0:
         original_total = cached_total
         original_files = cached_files
-    elif sessions:
-        original_total = max((s.get("session_total_bytes", 0) or 0) for s in sessions)
-        original_files = max((s.get("final_files_total", 0) or 0) for s in sessions)
+    elif finalized_sessions:
+        original_total = max((s.get("session_total_bytes", 0) or 0) for s in finalized_sessions)
+        original_files = max((s.get("final_files_total", 0) or 0) for s in finalized_sessions)
         # Fetch real size in background (only once)
         if not getattr(scan_full_log, '_size_fetching', False):
             scan_full_log._size_fetching = True
@@ -569,12 +717,12 @@ def scan_full_log():
                     src = RCLONE_CMD[2] if len(RCLONE_CMD) > 2 else ""
                     if not src:
                         return
-                    result = subprocess.run(
+                    sz_result = subprocess.run(
                         ["rclone", "size", src, "--json"],
-                        capture_output=True, text=True, timeout=600
+                        capture_output=True, text=True, timeout=RCLONE_SIZE_TIMEOUT_SEC
                     )
-                    if result.returncode == 0:
-                        data = json.loads(result.stdout)
+                    if sz_result.returncode == 0:
+                        data = json.loads(sz_result.stdout)
                         with state_lock:
                             state["source_size_bytes"] = data.get("bytes", 0)
                             state["source_size_files"] = data.get("count", 0)
@@ -596,7 +744,7 @@ def scan_full_log():
                 "elapsed_sec": s.get("final_elapsed_sec", 0),
                 "session_total": s.get("session_total_bytes", 0),
             }
-            for i, s in enumerate(sessions)
+            for i, s in enumerate(finalized_sessions)
         ]
         state["cumulative_transferred_bytes"] = cumulative_bytes
         state["cumulative_files_done"] = cumulative_files
@@ -605,43 +753,59 @@ def scan_full_log():
         state["original_total_files"] = original_files
         state["all_file_types"] = file_types
         state["total_copied_count"] = total_copied
+
+        # Cache chart history for parse_current() to read cheaply
+        state["cached_speed_history"] = downsample(speed_hist)
+        state["cached_pct_history"] = downsample(pct_hist)
+        state["cached_files_history"] = downsample(files_hist)
+
+        # Persist incremental scan offset and running state
+        state["last_scan_offset"] = new_offset
+        state["_running_sessions"] = sessions
+        state["_running_current_session"] = current_session
+        state["_running_prev_elapsed"] = prev_elapsed
+        state["_running_last_ts"] = last_ts
+        state["_running_prev_ts"] = prev_ts
+        state["_running_prev_transferred_bytes"] = prev_transferred_bytes
+        state["_running_prev_total_bytes"] = prev_total_bytes
+        state["_running_prev_files_done"] = prev_files_done
+        state["_running_prev_files_total"] = prev_files_total
+        MAX_HISTORY_ENTRIES = 50000
+        if len(speed_hist) > MAX_HISTORY_ENTRIES:
+            speed_hist = speed_hist[-MAX_HISTORY_ENTRIES:]
+        if len(pct_hist) > MAX_HISTORY_ENTRIES:
+            pct_hist = pct_hist[-MAX_HISTORY_ENTRIES:]
+        if len(files_hist) > MAX_HISTORY_ENTRIES:
+            files_hist = files_hist[-MAX_HISTORY_ENTRIES:]
+        state["_running_speed_hist"] = speed_hist
+        state["_running_pct_hist"] = pct_hist
+        state["_running_files_hist"] = files_hist
+        state["_running_chart_prev_el"] = chart_prev_el
+        state["_running_cumul_bytes_offset"] = cumul_bytes_offset
+        state["_running_cumul_files_offset"] = cumul_files_offset
+        state["_running_session_max_bytes"] = session_max_bytes
+        state["_running_session_max_files"] = session_max_files
+        state["_running_first_session_total"] = first_session_total
+
         save_state(state)
 
 
-def parse_current():
-    """Parse current stats from the tail of the log, combined with session state.
 
-    This is called every few seconds by the dashboard via /api/status.
-    It reads the last 16KB of the log (for current rclone stats), then
-    combines those with cumulative session data from scan_full_log() to
-    produce global progress numbers that span all sessions.
-    """
-    if not os.path.exists(LOG_FILE):
-        return {"error": "Log file not found", "rclone_running": is_rclone_running()}
-
+def _parse_tail_stats(tail):
+    """Parse the log tail for current transfer stats."""
     result = {
         "speed": None, "eta": None, "session_elapsed": "",
         "session_files_done": 0, "session_files_total": 0,
         "errors": 0, "checks_done": 0, "checks_total": 0, "listed": 0,
     }
-
-    # Read only the tail of the log for current-session stats (fast).
-    with open(LOG_FILE, "rb") as f:
-        f.seek(0, 2)
-        size = f.tell()
-        f.seek(max(0, size - 16000))
-        tail = f.read().decode("utf-8", errors="replace")
-
-    lines = tail.split("\n")
-
     cur_transferred_str = ""
     cur_total_str = ""
     cur_transferred_bytes = 0
     cur_total_bytes = 0
 
-    re_full_transfer = re.compile(r"Transferred:\s+([\d.]+\s+\S+)\s*/\s*([\d.]+\s+\S+),\s*(\d+)%,\s*([\d.]+\s*\S+/s),\s*ETA\s*(\S+)")
+    lines = tail.split("\n")
     for line in lines:
-        m = re_full_transfer.search(line)
+        m = RE_FULL_TRANSFER_ETA.search(line)
         if m:
             cur_transferred_str = m.group(1)
             cur_total_str = m.group(2)
@@ -664,13 +828,17 @@ def parse_current():
         if m4:
             result["session_elapsed"] = m4.group(1).strip()
 
-        m5 = re.search(r"Checks:\s+(\d+)\s*/\s*(\d+).+Listed\s+(\d+)", line)
+        m5 = RE_CHECKS_LISTED.search(line)
         if m5:
             result["checks_done"] = int(m5.group(1))
             result["checks_total"] = int(m5.group(2))
             result["listed"] = int(m5.group(3))
 
-    # Parse active transfers
+    return result, cur_transferred_str, cur_total_str, cur_transferred_bytes, cur_total_bytes, lines
+
+
+def _parse_active_transfers(lines):
+    """Parse active transfer items from log lines."""
     active = []
     for line in lines:
         m = RE_ACTIVE.search(line)
@@ -699,13 +867,15 @@ def parse_current():
     seen = {}
     for t in active:
         seen[t["name"]] = t
-    result["active"] = list(seen.values())
+    return list(seen.values())
 
-    # Recent files
+
+def _parse_recent_files(log_file):
+    """Find recently copied files from the log."""
     recent_files = []
-    chunk_size = 100000
-    max_chunk = 2000000
-    with open(LOG_FILE, "rb") as f:
+    chunk_size = RECENT_FILES_INITIAL_CHUNK
+    max_chunk = RECENT_FILES_MAX_CHUNK
+    with open(log_file, "rb") as f:
         f.seek(0, 2)
         fsize = f.tell()
         while chunk_size <= max_chunk and len(recent_files) < 15:
@@ -713,109 +883,64 @@ def parse_current():
             chunk = f.read().decode("utf-8", errors="replace")
             recent_files = []
             for line in chunk.split("\n"):
-                m = re.search(r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})\s+INFO\s+:\s+(.+?):\s+Copied\s+\(new\)", line)
+                m = RE_COPIED_WITH_TS.search(line)
                 if m:
                     recent_files.append({"name": m.group(2).strip(), "time": m.group(1).split(" ")[1]})
             if len(recent_files) >= 15 or chunk_size >= fsize:
                 break
             chunk_size *= 4
-    result["recent_files"] = recent_files[-15:][::-1]
+    return recent_files[-15:][::-1]
 
-    # Error messages
+
+def _parse_error_messages(log_file):
+    """Extract error messages from the log."""
     error_msgs = []
-    with open(LOG_FILE, "rb") as f:
+    with open(log_file, "rb") as f:
         f.seek(0, 2)
         fsize = f.tell()
-        f.seek(max(0, fsize - 100000))
+        f.seek(max(0, fsize - ERROR_TAIL_BYTES))
         err_tail = f.read().decode("utf-8", errors="replace")
     for line in err_tail.split("\n"):
         if "ERROR" in line and "Errors:" not in line:
-            m = re.search(r"\d{2}:\d{2}:\d{2}\s+ERROR\s+:\s+(.+)", line)
+            m = RE_ERROR_MSG.search(line)
             if m:
                 msg = m.group(1).strip()
                 if msg not in error_msgs:
                     error_msgs.append(msg)
-    result["error_messages"] = error_msgs[-5:]
+    return error_msgs[-5:]
+
+
+def parse_current():
+    """Parse current stats from the tail of the log, combined with session state.
+
+    This is called every few seconds by the dashboard via /api/status.
+    It reads the last 16KB of the log (for current rclone stats), then
+    combines those with cumulative session data from scan_full_log() to
+    produce global progress numbers that span all sessions.
+    """
+    if not os.path.exists(LOG_FILE):
+        return {"error": "Log file not found", "rclone_running": is_rclone_running()}
+
+    # Read only the tail of the log for current-session stats (fast).
+    with open(LOG_FILE, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - LOG_TAIL_BYTES))
+        tail = f.read().decode("utf-8", errors="replace")
+
+    result, cur_transferred_str, cur_total_str, cur_transferred_bytes, cur_total_bytes, lines = _parse_tail_stats(tail)
+    result["active"] = _parse_active_transfers(lines)
+    result["recent_files"] = _parse_recent_files(LOG_FILE)
+    result["error_messages"] = _parse_error_messages(LOG_FILE)
 
     # Process status
     result["finished"] = not is_rclone_running()
 
-    # Speed/progress history from ENTIRE log
-    try:
-        with open(LOG_FILE, "rb") as f:
-            full_log = f.read().decode("utf-8", errors="replace")
-        speed_hist = []
-        pct_hist = []
-        files_hist = []
-        prev_el = -1
-        cumul_bytes_offset = 0
-        cumul_files_offset = 0
-        session_max_bytes = 0
-        session_max_files = 0
-        session_total_bytes = 0
-        first_session_total = 0
-
-        for line in full_log.split("\n"):
-            m_spd = RE_TRANSFERRED_BYTES.search(line)
-            if m_spd:
-                cur_bytes = to_bytes(m_spd.group(1))
-                cur_total = to_bytes(m_spd.group(2))
-                if first_session_total == 0:
-                    first_session_total = cur_total
-                session_total_bytes = cur_total
-                session_max_bytes = max(session_max_bytes, cur_bytes)
-
-                if first_session_total > 0:
-                    global_pct_val = (cumul_bytes_offset + cur_bytes) / first_session_total * 100
-                    pct_hist.append(round(min(global_pct_val, 100), 1))
-
-                spd_str = m_spd.group(4)
-                sm = RE_SPEED.match(spd_str)
-                if sm:
-                    v = float(sm.group(1))
-                    u = sm.group(2).upper()
-                    if u.startswith("K"): v /= 1024
-                    elif u.startswith("G"): v *= 1024
-                    speed_hist.append(round(v, 3))
-
-            m_fl = re.search(r"Transferred:\s+(\d+)\s*/\s*\d+,\s*\d+%", line)
-            if m_fl:
-                cur_files = int(m_fl.group(1))
-                session_max_files = max(session_max_files, cur_files)
-                files_hist.append(cumul_files_offset + cur_files)
-
-            m_el = RE_ELAPSED.search(line)
-            if m_el:
-                el = parse_elapsed(m_el.group(1).strip())
-                # Session boundary in chart data: shift cumulative offsets
-                # and insert None to create a visual gap in the chart.
-                if prev_el > 60 and el < prev_el * 0.5:
-                    cumul_bytes_offset += session_max_bytes
-                    cumul_files_offset += session_max_files
-                    session_max_bytes = 0
-                    session_max_files = 0
-                    speed_hist.append(None)
-                    pct_hist.append(None)
-                    files_hist.append(None)
-                prev_el = el
-
-        def downsample(arr, target=200):
-            if len(arr) <= target:
-                return arr
-            step = len(arr) / target
-            result = []
-            for i in range(target):
-                idx = int(i * step)
-                result.append(arr[idx])
-            return result
-
-        result["speed_history"] = downsample(speed_hist)
-        result["pct_history"] = downsample(pct_hist)
-        result["files_history"] = downsample(files_hist)
-    except Exception:
-        result["speed_history"] = []
-        result["pct_history"] = []
-        result["files_history"] = []
+    # Speed/progress history from cached state (built by scan_full_log)
+    with state_lock:
+        result["speed_history"] = state.get("cached_speed_history", [])
+        result["pct_history"] = state.get("cached_pct_history", [])
+        result["files_history"] = state.get("cached_files_history", [])
 
     # Combine current session stats with cumulative totals from all prior
     # sessions. global_transferred = prior sessions + current session.
@@ -903,7 +1028,7 @@ def parse_current():
                     t_prev_real_end = t_prev_start + timedelta(seconds=prev_elapsed)
                     t_cur_start = datetime.strptime(cur_start, "%Y/%m/%d %H:%M:%S")
                     gap = (t_cur_start - t_prev_real_end).total_seconds()
-                    if gap > 60:
+                    if gap > MIN_DOWNTIME_GAP_SEC:
                         downtimes.append({
                             "after_session": i,
                             "duration": fmt_duration(gap),
@@ -958,7 +1083,7 @@ def background_scanner():
             scan_full_log()
         except Exception as e:
             print(f"Scanner error: {e}")
-        time.sleep(30)
+        time.sleep(SCANNER_INTERVAL_SEC)
 
 
 # ─── HTML ─────────────────────────────────────────────────────────────────────
@@ -973,6 +1098,7 @@ HTML = r"""<!DOCTYPE html>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  *:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   html { scrollbar-width: none; }
 
   :root {
@@ -981,7 +1107,7 @@ HTML = r"""<!DOCTYPE html>
     --card-border: #151d35;
     --text: #c8d3e8;
     --text-dim: #7a8baa;
-    --text-muted: #6a7a9a;
+    --text-muted: #8a9ab8;
     --blue: #3b82f6;
     --blue-light: #60a5fa;
     --green: #22c55e;
@@ -992,7 +1118,7 @@ HTML = r"""<!DOCTYPE html>
     --pink: #f472b6;
     --yellow: #facc15;
     --chart-grid: #151d35;
-    --chart-text: #2a3555;
+    --chart-text: #6a7595;
     --mini-bar-bg: #0a0f1e;
     --big-track-bg: #0a0f1e;
     --big-track-border: #151d35;
@@ -1006,8 +1132,8 @@ HTML = r"""<!DOCTYPE html>
     --card: #ffffff;
     --card-border: #e2e8f0;
     --text: #1e293b;
-    --text-dim: #64748b;
-    --text-muted: #94a3b8;
+    --text-dim: #546278;
+    --text-muted: #6b7a8f;
     --blue: #2563eb;
     --blue-light: #3b82f6;
     --green: #16a34a;
@@ -1312,7 +1438,7 @@ HTML = r"""<!DOCTYPE html>
       <div>Uptime: <span id="uptimePct" style="color:var(--green)">--</span></div>
       <div>Updated: <span id="lastUpdate">--</span></div>
     </div>
-    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle dark/light mode">&#9790;</button>
+    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle dark/light mode" aria-label="Toggle dark/light mode">&#9790;</button>
   </div>
 </div>
 
@@ -1337,7 +1463,7 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div class="big-track">
     <div class="prev-fill" id="prevBar" style="width:0%"></div>
-    <div class="big-fill" id="bigBar" style="width:0%"></div>
+    <div class="big-fill" id="bigBar" style="width:0%" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
   </div>
   <div class="big-bars">
     <div class="sub-bar-wrap">
@@ -1411,17 +1537,17 @@ HTML = r"""<!DOCTYPE html>
 <div class="charts-row" id="chartsRow">
   <div class="chart-card">
     <h3>Transfer Speed</h3>
-    <div class="chart-container"><svg class="chart-svg" id="speedChart"></svg></div>
+    <div class="chart-container"><svg class="chart-svg" id="speedChart" aria-label="Speed chart"></svg></div>
   </div>
   <div class="chart-card">
     <h3>Data Progress Over Time</h3>
-    <div class="chart-container"><svg class="chart-svg" id="progressChart"></svg></div>
+    <div class="chart-container"><svg class="chart-svg" id="progressChart" aria-label="Data progress chart"></svg></div>
   </div>
 </div>
 
 <div class="chart-full" id="chartsFullRow">
   <h3>Files Transferred Over Time (Global)</h3>
-  <div class="chart-container"><svg class="chart-svg" id="filesChart"></svg></div>
+  <div class="chart-container"><svg class="chart-svg" id="filesChart" aria-label="Files transferred chart"></svg></div>
 </div>
 
 <!-- Daily Transfer Bar Chart -->
@@ -1463,19 +1589,42 @@ HTML = r"""<!DOCTYPE html>
 
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div id="connLost" role="alert" aria-live="assertive" style="display:none;position:fixed;top:0;left:0;right:0;background:var(--red);color:#fff;text-align:center;padding:10px 16px;font-size:0.85rem;font-weight:600;z-index:300;">Connection lost. Dashboard cannot reach the server.</div>
 
 <script>
+function getCsrfToken(){return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('csrf_token='))?.split('=')[1]||''}
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
 }
 
+let failCount = 0;
 let speedHistory = [];
 let progressHistory = [];
 let filesHistory = [];
 let historyLoaded = false;
+
+// Styled confirm modal (replaces native confirm())
+function showConfirmModal(message) {
+  return new Promise((resolve) => {
+    if (document.getElementById('_cm_overlay')) return resolve(false);
+    const overlay = document.createElement('div');
+    overlay.id = '_cm_overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML = `<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.3);"><p style="margin:0 0 20px;font-size:0.95rem;color:var(--text);">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p><div style="display:flex;gap:10px;justify-content:flex-end;"><button id="_cm_cancel" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;">Cancel</button><button id="_cm_ok" style="padding:8px 18px;border-radius:8px;border:none;background:var(--blue);color:#fff;cursor:pointer;font-weight:600;">OK</button></div></div>`;
+    document.body.appendChild(overlay);
+    function cleanup() { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+    function escHandler(e) { if (e.key === 'Escape') { cleanup(); resolve(false); } }
+    document.addEventListener('keydown', escHandler);
+    overlay.querySelector('#_cm_ok').onclick = () => { cleanup(); resolve(true); };
+    overlay.querySelector('#_cm_cancel').onclick = () => { cleanup(); resolve(false); };
+    overlay.querySelector('#_cm_ok').focus();
+  });
+}
 let peakSpeedVal = 0;
 let peakSpeedTime = '';
 
@@ -1659,6 +1808,9 @@ async function refresh() {
     const res = await fetch('/api/status');
     if (!res.ok) return;
     const d = await res.json();
+    failCount = 0;
+    document.getElementById('connLost').style.display = 'none';
+    document.body.style.paddingTop = '';
 
     // Show empty state if API returns error (no log file) AND rclone is NOT running
     if (d.error && !d.rclone_running) {
@@ -1753,6 +1905,7 @@ async function refresh() {
     const pct = d.global_pct || 0;
     document.getElementById('bigPct').textContent = pct;
     document.getElementById('bigBar').style.width = Math.max(pct, 0.2) + '%';
+    document.getElementById('bigBar').setAttribute('aria-valuenow', pct);
     if (d.global_transferred) document.getElementById('bpTransferred').textContent = d.global_transferred;
     if (d.global_total) document.getElementById('bpTotal').textContent = d.global_total;
     if (d.eta) {
@@ -1766,7 +1919,7 @@ async function refresh() {
       if (etaSec > 0 && etaSec < 604800) {
         const finish = new Date(Date.now() + etaSec * 1000);
         const opts = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' };
-        document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString('ro-RO', opts);
+        document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString(undefined, opts);
       } else {
         document.getElementById('finishTime').textContent = '';
       }
@@ -1962,7 +2115,7 @@ async function refresh() {
         const ext = getExtension(f.name);
         return `<div class="recent-file">
           <div class="rf-name" title="${esc(f.name)}">${esc(f.name)}</div>
-          <span class="rf-ext" style="background:${getTypeColor(ext)}22;color:${getTypeColor(ext)}">${ext}</span>
+          <span class="rf-ext" style="background:${getTypeColor(ext)}22;color:${getTypeColor(ext)}">${esc(ext)}</span>
           <div class="rf-time">${f.time}</div>
         </div>`;
       }).join('');
@@ -1981,7 +2134,7 @@ async function refresh() {
           const color = getTypeColor(ext);
           return `<div class="type-badge">
             <div class="type-bar" style="width:${barW}px;background:${color}40;"></div>
-            <span class="type-name">.${ext}</span>
+            <span class="type-name">.${esc(ext)}</span>
             <span class="type-count">${count}</span>
           </div>`;
         }).join('') + '</div>';
@@ -2003,7 +2156,7 @@ async function refresh() {
             document.getElementById('bpEta').textContent = etaStr;
             // Finish time
             const finish = new Date(Date.now() + etaSec * 1000);
-            document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString('ro-RO', {weekday:'short', day:'numeric', month:'short'}) + ', ' + finish.toLocaleTimeString('ro-RO', {hour:'2-digit', minute:'2-digit'});
+            document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}) + ', ' + finish.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
         }
     }
 
@@ -2029,7 +2182,11 @@ async function refresh() {
 
     checkNotifications(d);
 
-  } catch(e) { console.error('Refresh error:', e); }
+  } catch(e) {
+    console.error('Refresh error:', e);
+    failCount++;
+    if (failCount >= 3) { document.getElementById('connLost').style.display = 'block'; document.body.style.paddingTop = '48px'; }
+  }
 }
 
 // ─── Pause / Resume ───────────────────────────────────────────────────────
@@ -2042,9 +2199,9 @@ function showToast(msg, color) {
 }
 
 async function cancelTransfer() {
-  if (!confirm('Stop the transfer and start a new one?')) return;
+  if (!await showConfirmModal('Stop the transfer and start a new one?')) return;
   try {
-    await fetch('/api/pause', {method:'POST'});
+    await fetch('/api/pause', {method:'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}});
   } catch(e) {}
   window.location.href = '/wizard';
 }
@@ -2058,7 +2215,7 @@ async function doAction(action) {
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span>${action === 'pause' ? 'Stopping...' : 'Starting...'}`;
   try {
-    const res = await fetch(`/api/${action}`, { method: 'POST' });
+    const res = await fetch(`/api/${action}`, { method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()} });
     const d = await res.json();
     if (d.ok) {
       showToast(d.msg, action === 'pause' ? 'var(--orange)' : 'var(--green)');
@@ -2104,10 +2261,21 @@ function toggleTheme() {
 // Load saved theme
 (function() {
   const saved = localStorage.getItem('cloudmirror-theme');
+  if (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.getElementById('themeToggle').textContent = '\u2600';
+  }
   if (saved === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
     document.getElementById('themeToggle').textContent = '\u2600';
   }
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('cloudmirror-theme')) {
+      document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+      document.getElementById('themeToggle').textContent = e.matches ? '\u2600' : '\u263E';
+      if (drawAreaChart._cache) drawAreaChart._cache = {};
+    }
+  });
 })();
 
 let _faviconCanvas = null;
@@ -2186,10 +2354,12 @@ function playNotifSound(freq, dur) {
 
 async function showHistory() {
   try {
+    const existing = document.querySelector('[data-history-modal]');
+    if (existing) existing.remove();
     const res = await fetch('/api/history');
     const data = await res.json();
     if (!data.length) { showToast('No transfer history found.', 'var(--text-dim)'); return; }
-    let html = '<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:300;display:flex;align-items:center;justify-content:center;" onclick="if(event.target===this)this.remove()">';
+    let html = '<div data-history-modal style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:300;display:flex;align-items:center;justify-content:center;" onclick="if(event.target===this)this.remove()">';
     html += '<div style="background:var(--card);border:1px solid var(--card-border);border-radius:16px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;">';
     html += '<h3 style="font-size:1rem;font-weight:700;color:var(--text);margin-bottom:16px;">Transfer History</h3>';
     data.forEach(h => {
@@ -2228,17 +2398,18 @@ WIZARD_HTML = r'''<!DOCTYPE html>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  *:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   html { scrollbar-width: none; }
   :root {
     --bg: #060a14; --card: #0d1220; --card-border: #151d35;
-    --text: #c8d3e8; --text-dim: #7a8baa; --text-muted: #5a6a8a;
+    --text: #c8d3e8; --text-dim: #7a8baa; --text-muted: #8a9ab8;
     --blue: #3b82f6; --blue-light: #60a5fa; --green: #22c55e;
     --orange: #f59e0b; --red: #ef4444; --purple: #a78bfa;
     --cyan: #22d3ee; --pink: #f472b6; --card-hover: #131b30;
   }
   [data-theme="light"] {
     --bg: #f0f2f5; --card: #ffffff; --card-border: #e2e8f0;
-    --text: #1e293b; --text-dim: #64748b; --text-muted: #94a3b8;
+    --text: #1e293b; --text-dim: #546278; --text-muted: #6b7a8f;
     --blue: #2563eb; --blue-light: #3b82f6; --green: #16a34a;
     --orange: #d97706; --red: #dc2626; --purple: #7c3aed;
     --cyan: #0891b2; --pink: #db2777; --card-hover: #f8fafc;
@@ -2381,7 +2552,8 @@ WIZARD_HTML = r'''<!DOCTYPE html>
     color: var(--text); font-size: 1rem; font-family: inherit;
     transition: border-color 0.2s;
   }
-  .form-input:focus { outline: none; border-color: var(--blue); }
+  .form-input:focus:not(:focus-visible) { outline: none; }
+  .form-input:focus { border-color: var(--blue); }
   .form-input::placeholder { color: var(--text-muted); }
   .form-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }
 
@@ -2444,7 +2616,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
 </style>
 </head>
 <body>
-<button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">☀️</button>
+<button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle dark/light mode">&#9790;</button>
 
 <div class="wizard-container">
   <div class="progress-dots" id="progressDots">
@@ -2517,6 +2689,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
       <div class="form-group" style="margin-top:16px;">
         <label class="form-label" for="sourcePathInput">Folder Path</label>
         <input class="form-input" id="sourcePathInput" type="text" placeholder="e.g. /Users/you/Documents">
+        <div id="sourcePathError" style="display:none;font-size:0.75rem;color:var(--red);margin-top:6px;"></div>
         <div class="form-hint">The folder on your computer where your files are stored.</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
           <button type="button" class="btn-secondary" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('sourcePathInput').value=((window._homeDir||'/tmp')+'/Desktop');document.getElementById('sourcePathInput').dispatchEvent(new Event('input'))">Desktop</button>
@@ -2580,6 +2753,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
       <div class="form-group" style="margin-top:16px;">
         <label class="form-label" for="destPathInput">Save to Folder</label>
         <input class="form-input" id="destPathInput" type="text" placeholder="e.g. /Users/you/Desktop/Backup">
+        <div id="destPathError" style="display:none;font-size:0.75rem;color:var(--red);margin-top:6px;"></div>
         <div class="form-hint">Where to save the copied files on your computer.</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
           <button type="button" style="padding:10px 14px;font-size:0.75rem;border-radius:8px;cursor:pointer;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);min-height:44px;" onclick="document.getElementById('destPathInput').value=((window._homeDir||'/tmp')+'/Desktop/CloudMirror-Backup');document.getElementById('destPathInput').dispatchEvent(new Event('input'))">Desktop/CloudMirror-Backup</button>
@@ -2617,18 +2791,18 @@ WIZARD_HTML = r'''<!DOCTYPE html>
       </div>
       <div class="form-group">
         <label class="form-label">Transfer Speed</label>
-        <div class="speed-options">
-          <div class="speed-card" onclick="selectSpeed(this, '4')">
+        <div class="speed-options" role="radiogroup" aria-label="Transfer speed">
+          <div class="speed-card" role="radio" aria-checked="false" onclick="selectSpeed(this, '4')">
             <input type="radio" name="speed" value="4">
             <div class="speed-label">Normal</div>
             <div class="speed-desc">4 files at a time</div>
           </div>
-          <div class="speed-card selected" onclick="selectSpeed(this, '8')">
+          <div class="speed-card selected" role="radio" aria-checked="true" onclick="selectSpeed(this, '8')">
             <input type="radio" name="speed" value="8" checked>
             <div class="speed-label">Fast</div>
             <div class="speed-desc">8 files at a time</div>
           </div>
-          <div class="speed-card" onclick="selectSpeed(this, '16')">
+          <div class="speed-card" role="radio" aria-checked="false" onclick="selectSpeed(this, '16')">
             <input type="radio" name="speed" value="16">
             <div class="speed-label">Maximum</div>
             <div class="speed-desc">16 files at a time</div>
@@ -2644,6 +2818,15 @@ WIZARD_HTML = r'''<!DOCTYPE html>
         <label class="form-label" for="bwLimit">Bandwidth Limit (optional)</label>
         <input class="form-input" id="bwLimit" type="text" placeholder="e.g. 10M, 1G, 500K">
         <div class="form-hint">Limit upload/download speed. Leave empty for unlimited.</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;margin-top:20px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+          <input type="checkbox" id="useChecksum" style="width:18px;height:18px;">
+          <div>
+            <div class="form-label" style="margin-bottom:0;">Verify with checksums</div>
+            <div class="form-hint">Slower but ensures file integrity. Recommended for important data.</div>
+          </div>
+        </label>
       </div>
     </div>
     <div class="btn-row">
@@ -2682,6 +2865,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
         Preview (see what will be copied)
       </button>
       <div id="previewResult" style="display:none;margin-bottom:16px;padding:16px;background:var(--bg);border:1px solid var(--card-border);border-radius:12px;font-size:0.85rem;color:var(--text);"></div>
+      <div id="wizardError" style="display:none;padding:12px 16px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;font-size:0.85rem;color:var(--red);text-align:center;margin-bottom:12px;"></div>
       <button class="btn btn-primary btn-big" id="startBtn" onclick="startTransfer()">
         Start Transfer
       </button>
@@ -2691,6 +2875,7 @@ WIZARD_HTML = r'''<!DOCTYPE html>
 </div>
 
 <script>
+function getCsrfToken(){return document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('csrf_token='))?.split('=')[1]||''}
 // State
 let currentStep = 1;
 let sourceProvider = null;
@@ -2722,15 +2907,25 @@ function toggleTheme() {
   const current = html.getAttribute('data-theme');
   const next = current === 'light' ? 'dark' : 'light';
   html.setAttribute('data-theme', next);
-  document.querySelector('.theme-toggle').textContent = next === 'light' ? '🌙' : '☀️';
+  document.querySelector('.theme-toggle').textContent = next === 'light' ? '\u2600' : '\u263E';
   localStorage.setItem('cloudmirror-theme', next);
 }
 (function() {
   const saved = localStorage.getItem('cloudmirror-theme');
+  if (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.querySelector('.theme-toggle').textContent = '\u2600';
+  }
   if (saved === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
-    document.querySelector('.theme-toggle').textContent = '🌙';
+    document.querySelector('.theme-toggle').textContent = '\u2600';
   }
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('cloudmirror-theme')) {
+      document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+      document.querySelector('.theme-toggle').textContent = e.matches ? '\u2600' : '\u263E';
+    }
+  });
 })();
 
 // Fetch home directory and check rclone on page load
@@ -2744,17 +2939,44 @@ function toggleTheme() {
   }).catch(() => {});
 })();
 
+// Styled confirm modal (replaces native confirm())
+function showConfirmModal(message) {
+  return new Promise((resolve) => {
+    if (document.getElementById('_cm_wiz_overlay')) return resolve(false);
+    const overlay = document.createElement('div');
+    overlay.id = '_cm_wiz_overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:400;display:flex;align-items:center;justify-content:center;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--card);border:1px solid var(--card-border);border-radius:16px;padding:28px 24px;max-width:440px;width:90%;text-align:center;';
+    box.innerHTML = '<div style="font-size:0.95rem;color:var(--text);margin-bottom:20px;line-height:1.6;">' + message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>'
+      + '<div style="display:flex;gap:12px;justify-content:center;">'
+      + '<button id="cmConfirmCancel" class="btn btn-secondary" style="padding:10px 24px;border-radius:10px;font-size:0.85rem;cursor:pointer;">Cancel</button>'
+      + '<button id="cmConfirmOk" class="btn btn-primary" style="padding:10px 24px;border-radius:10px;font-size:0.85rem;cursor:pointer;">Continue</button>'
+      + '</div>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    function cleanup() { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+    function escHandler(e) { if (e.key === 'Escape') { cleanup(); resolve(false); } }
+    document.addEventListener('keydown', escHandler);
+    box.querySelector('#cmConfirmCancel').onclick = () => { cleanup(); resolve(false); };
+    box.querySelector('#cmConfirmOk').onclick = () => { cleanup(); resolve(true); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) { cleanup(); resolve(false); } });
+    box.querySelector('#cmConfirmOk').focus();
+  });
+}
+
 // Navigation
-function goTo(step) {
+async function goTo(step) {
   if (step >= 3 && !sourceProvider) return;
   if (step >= 4 && !destProvider) return;
   if (step === 3) updateDestGrid();
   if (step === 5) buildConnectStep();
   if (step === 6) {
     if (sourceProvider === destProvider && sourceProvider !== 'local') {
-      if (!confirm('Source and destination are the same service. This will copy between different accounts. Continue?')) {
-        return;
-      }
+      const proceed = await showConfirmModal('Source and destination are the same service. Two separate accounts will be set up (e.g. &ldquo;gdrive&rdquo; for source and &ldquo;gdrive_dest&rdquo; for destination). Continue?');
+      if (!proceed) return;
     }
     buildSummary();
   }
@@ -2819,9 +3041,12 @@ function selectSource(card) {
   if (sourceProvider === 'other') {
     const input = document.getElementById('sourceOtherInput');
     document.getElementById('sourceNext').disabled = !input.value.trim();
-    input.addEventListener('input', () => {
-      document.getElementById('sourceNext').disabled = !input.value.trim();
-    });
+    if (!input.dataset.listening) {
+      input.dataset.listening = 'true';
+      input.addEventListener('input', () => {
+        document.getElementById('sourceNext').disabled = !input.value.trim();
+      });
+    }
   } else {
     document.getElementById('sourceNext').disabled = false;
   }
@@ -2835,6 +3060,9 @@ function selectDest(card) {
   destProvider = card.dataset.provider;
   destDisplayName = card.dataset.name;
   destName = providerKeys[destProvider] || destProvider;
+  if (destProvider === sourceProvider && sourceProvider !== 'local') {
+    destName = sourceName + '_dest';
+  }
 
   document.getElementById('destLocalPath').classList.toggle('show', destProvider === 'local');
   document.getElementById('destOtherName').classList.toggle('show', destProvider === 'other');
@@ -2842,9 +3070,12 @@ function selectDest(card) {
   if (destProvider === 'other') {
     const input = document.getElementById('destOtherInput');
     document.getElementById('destNext').disabled = !input.value.trim();
-    input.addEventListener('input', () => {
-      document.getElementById('destNext').disabled = !input.value.trim();
-    });
+    if (!input.dataset.listening) {
+      input.dataset.listening = 'true';
+      input.addEventListener('input', () => {
+        document.getElementById('destNext').disabled = !input.value.trim();
+      });
+    }
   } else {
     document.getElementById('destNext').disabled = false;
   }
@@ -2852,17 +3083,23 @@ function selectDest(card) {
 
 function updateDestGrid() {
   document.querySelectorAll('#destGrid .provider-card').forEach(c => {
+    c.classList.remove('disabled');
+    const note = c.querySelector('.same-provider-note');
+    if (note) note.remove();
     if (c.dataset.provider === sourceProvider && sourceProvider !== 'local' && sourceProvider !== 'other') {
-      c.classList.add('disabled');
-    } else {
-      c.classList.remove('disabled');
+      const span = document.createElement('div');
+      span.className = 'same-provider-note';
+      span.style.cssText = 'font-size:0.75rem;color:var(--text-dim);margin-top:4px;';
+      span.textContent = '(will configure as separate account)';
+      c.appendChild(span);
     }
   });
 }
 
 function selectSpeed(card, val) {
-  document.querySelectorAll('.speed-card').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.speed-card').forEach(c => { c.classList.remove('selected'); c.setAttribute('aria-checked', 'false'); });
   card.classList.add('selected');
+  card.setAttribute('aria-checked', 'true');
   selectedSpeed = val;
 }
 
@@ -2897,7 +3134,7 @@ async function buildConnectStep() {
     if (data.home_dir) window._homeDir = data.home_dir;
     if (!data.rclone_installed) {
       statusEl.innerHTML = '<span style="color:var(--orange)">rclone not found. Installing...</span>';
-      const installResp = await fetch('/api/wizard/check-rclone', {method:'POST'});
+      const installResp = await fetch('/api/wizard/check-rclone', {method:'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}});
       const installData = await installResp.json();
       if (!installData.ok) {
         statusEl.innerHTML = '<span style="color:var(--red)">Could not install rclone. Please install manually from rclone.org</span>';
@@ -2916,9 +3153,7 @@ async function buildConnectStep() {
     items.push({provider: sourceProvider, name: sourceName, display: sourceDisplayName, role: 'source'});
   }
   if (destProvider && destProvider !== 'local' && destProvider !== 'other') {
-    if (destProvider !== sourceProvider) {
-      items.push({provider: destProvider, name: destName, display: destDisplayName, role: 'dest'});
-    }
+    items.push({provider: destProvider, name: destName, display: destDisplayName, role: 'dest'});
   }
 
   if (items.length === 0) {
@@ -2972,7 +3207,7 @@ async function connectRemote(name, type, display, username, password) {
     if (password) body.password = password;
     const resp = await fetch('/api/wizard/configure-remote', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
       body: JSON.stringify(body)
     });
     const data = await resp.json();
@@ -3028,7 +3263,7 @@ function startPolling(name, display, type) {
     try {
       const resp = await fetch('/api/wizard/check-remote', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
         body: JSON.stringify({name})
       });
       const data = await resp.json();
@@ -3059,6 +3294,7 @@ function buildSummary() {
   const excludes = document.getElementById('excludePatterns').value.trim();
   const bwLimit = document.getElementById('bwLimit').value.trim();
   const speedLabels = {'4': 'Normal (4 files)', '8': 'Fast (8 files)', '16': 'Maximum (16 files)'};
+  const useChecksum = document.getElementById('useChecksum').checked;
 
   let srcPath = getSourcePath();
   let dstPath = getDestPath();
@@ -3089,14 +3325,21 @@ function buildSummary() {
       <span class="summary-label">Bandwidth Limit</span>
       <span class="summary-value">${esc(bwLimit)}</span>
     </div>` : ''}
+    ${useChecksum ? `<div class="summary-row"><span class="summary-label">Checksum verification</span><span class="summary-value">Enabled</span></div>` : ''}
   `;
+}
+
+function showWizardError(msg) {
+  const el = document.getElementById('wizardError');
+  if (el) { el.textContent = msg; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 8000); }
 }
 
 function getSourcePath() {
   const srcSub = document.getElementById('sourceSubfolder').value.trim();
   if (sourceProvider === 'local') {
     const p = document.getElementById('sourcePathInput').value.trim();
-    if (!p) { alert('Please enter a folder path.'); return null; }
+    if (!p) { const errEl = document.getElementById('sourcePathError'); errEl.textContent = 'Please enter a folder path.'; errEl.style.display = 'block'; return null; }
+    document.getElementById('sourcePathError').style.display = 'none';
     return p;
   }
   if (sourceProvider === 'other') {
@@ -3110,7 +3353,8 @@ function getDestPath() {
   const dstSub = document.getElementById('destSubfolder').value.trim();
   if (destProvider === 'local') {
     const p = document.getElementById('destPathInput').value.trim();
-    if (!p) { alert('Please enter a folder path.'); return null; }
+    if (!p) { const errEl = document.getElementById('destPathError'); errEl.textContent = 'Please enter a folder path.'; errEl.style.display = 'block'; return null; }
+    document.getElementById('destPathError').style.display = 'none';
     return p;
   }
   if (destProvider === 'other') {
@@ -3128,16 +3372,16 @@ async function previewTransfer() {
   try {
     const resp = await fetch('/api/wizard/preview', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
       body: JSON.stringify({source: getSourcePath(), dest: getDestPath(), source_type: sourceProvider, dest_type: destProvider})
     });
     const data = await resp.json();
     if (data.ok) {
       result.style.display = 'block';
-      result.innerHTML = '<strong>' + data.count.toLocaleString() + ' files</strong> (' + data.size + ') will be copied.';
+      result.innerHTML = '<strong>' + esc(data.count.toLocaleString()) + ' files</strong> (' + esc(data.size) + ') will be copied.';
     } else {
       result.style.display = 'block';
-      result.innerHTML = 'Could not preview: ' + (data.msg || 'unknown error');
+      result.innerHTML = 'Could not preview: ' + esc(data.msg || 'unknown error');
     }
   } catch(e) {
     result.style.display = 'block';
@@ -3156,7 +3400,7 @@ async function startTransfer() {
   const safetyTimeout = setTimeout(() => {
     btn.disabled = false;
     btn.textContent = 'Start Transfer';
-    alert('Transfer may have started. Check the dashboard.');
+    showWizardError('Transfer may have started. Check the dashboard.');
   }, 30000);
 
   const excludes = document.getElementById('excludePatterns').value.trim();
@@ -3173,7 +3417,7 @@ async function startTransfer() {
     }
     const resp = await fetch('/api/wizard/start', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
       body: JSON.stringify({
         source: src,
         dest: dst,
@@ -3181,7 +3425,8 @@ async function startTransfer() {
         excludes: excludeList,
         source_type: sourceProvider,
         dest_type: destProvider,
-        bw_limit: document.getElementById('bwLimit').value.trim()
+        bw_limit: document.getElementById('bwLimit').value.trim(),
+        checksum: document.getElementById('useChecksum').checked
       })
     });
     clearTimeout(safetyTimeout);
@@ -3192,13 +3437,13 @@ async function startTransfer() {
     } else {
       btn.disabled = false;
       btn.textContent = 'Start Transfer';
-      alert('Error: ' + (data.msg || 'Failed to start transfer'));
+      showWizardError('Error: ' + (data.msg || 'Failed to start transfer'));
     }
   } catch(e) {
     clearTimeout(safetyTimeout);
     btn.disabled = false;
     btn.textContent = 'Start Transfer';
-    alert('Error starting transfer. Check the console.');
+    showWizardError('Error starting transfer. Please check the console.');
   }
 }
 </script>
@@ -3230,10 +3475,10 @@ def configure_remote_api(name, provider_type, username=None, password=None):
         if result.returncode != 0:
             return {"ok": False, "msg": "Failed to process credentials"}
         obscured = result.stdout.strip()
-        cmd = [
-            "rclone", "config", "create", name, provider_type,
-            f"user={username}", f"pass={obscured}",
-        ]
+        env = os.environ.copy()
+        env[f"RCLONE_CONFIG_{name.upper()}_USER"] = username
+        env[f"RCLONE_CONFIG_{name.upper()}_PASS"] = obscured
+        cmd = ["rclone", "config", "create", name, provider_type]
     elif provider_type == "protondrive":
         if not username or not password:
             return {"ok": False, "needs_credentials": True, "msg": "Proton Drive requires your Proton username and password.",
@@ -3242,32 +3487,30 @@ def configure_remote_api(name, provider_type, username=None, password=None):
         if result.returncode != 0:
             return {"ok": False, "msg": "Failed to process credentials"}
         obscured_pw = result.stdout.strip()
-        cmd = [
-            "rclone", "config", "create", name, provider_type,
-            f"username={username}",
-            f"password={obscured_pw}",
-        ]
+        env = os.environ.copy()
+        env[f"RCLONE_CONFIG_{name.upper()}_USERNAME"] = username
+        env[f"RCLONE_CONFIG_{name.upper()}_PASSWORD"] = obscured_pw
+        cmd = ["rclone", "config", "create", name, provider_type]
     elif provider_type == "s3":
         if not username or not password:
             return {"ok": False, "needs_credentials": True,
                     "msg": "Amazon S3 requires your Access Key ID and Secret Access Key.",
                     "user_label": "Access Key ID", "pass_label": "Secret Access Key"}
-        cmd = [
-            "rclone", "config", "create", name, provider_type,
-            f"access_key_id={username}",
-            f"secret_access_key={password}",
-            "provider=AWS",
-        ]
+        env = os.environ.copy()
+        env[f"RCLONE_CONFIG_{name.upper()}_ACCESS_KEY_ID"] = username
+        env[f"RCLONE_CONFIG_{name.upper()}_SECRET_ACCESS_KEY"] = password
+        cmd = ["rclone", "config", "create", name, provider_type, "provider=AWS"]
     else:
         # For OAuth-based providers, rclone config create will open browser automatically
         cmd = ["rclone", "config", "create", name, provider_type]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        run_env = env if provider_type in ("s3", "mega", "protondrive") else None
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=RCLONE_CONFIG_TIMEOUT_SEC, env=run_env)
         if result.returncode == 0:
             # Validate the remote actually works
             if provider_type in ("mega", "protondrive"):
-                check = subprocess.run(["rclone", "lsd", f"{name}:"], capture_output=True, text=True, timeout=30)
+                check = subprocess.run(["rclone", "lsd", f"{name}:"], capture_output=True, text=True, timeout=RCLONE_CHECK_TIMEOUT_SEC)
                 if check.returncode != 0:
                     # Remove the broken remote
                     subprocess.run(["rclone", "config", "delete", name], capture_output=True, text=True)
@@ -3288,6 +3531,11 @@ def configure_remote_api(name, provider_type, username=None, password=None):
 # ─── HTTP Server ──────────────────────────────────────────────────────────────
 
 def pause_rclone():
+    with _transfer_lock:
+        return _pause_rclone_locked()
+
+
+def _pause_rclone_locked():
     global rclone_pid
     if not rclone_pid:
         return {"ok": False, "msg": "No tracked rclone process"}
@@ -3304,6 +3552,11 @@ def pause_rclone():
 
 
 def resume_rclone():
+    with _transfer_lock:
+        return _resume_rclone_locked()
+
+
+def _resume_rclone_locked():
     global RCLONE_CMD, rclone_pid
     if not RCLONE_CMD:
         with state_lock:
@@ -3340,13 +3593,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _send_html(self, html):
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
+        self.send_header("Set-Cookie", f"csrf_token={CSRF_TOKEN}; Path=/; SameSite=Strict")
         self.end_headers()
         self.wfile.write(html.encode())
+
+    def _check_csrf(self):
+        """Verify CSRF token from X-CSRF-Token header matches the server token."""
+        token = self.headers.get("X-CSRF-Token")
+        if not hmac.compare_digest(token or "", CSRF_TOKEN):
+            self._send_json({"ok": False, "msg": "CSRF token invalid"}, 403)
+            return False
+        return True
+
+    def _check_host(self):
+        """Reject requests where Host header is not localhost/127.0.0.1."""
+        host = self.headers.get("Host", "")
+        host_name = host.split(":")[0]
+        if host_name not in ("localhost", "127.0.0.1"):
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Forbidden: invalid Host header")
+            return False
+        return True
 
     def _read_body(self):
         # Cap request size to prevent memory exhaustion from oversized payloads.
         length = int(self.headers.get("Content-Length", 0))
-        if length > 10240:  # 10KB limit
+        if length > MAX_REQUEST_BODY_BYTES:
             return None
         if length > 0:
             try:
@@ -3356,6 +3630,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return {}
 
     def do_GET(self):
+        if not self._check_host():
+            return
         global TRANSFER_ACTIVE
         if self.path == "/api/status":
             self._send_json(parse_current())
@@ -3395,6 +3671,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if not self._check_host():
+            return
+        if not self._check_csrf():
+            return
         if self.path == "/api/pause":
             self._send_json(pause_rclone())
         elif self.path == "/api/resume":
@@ -3408,11 +3688,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 try:
                     system = platform.system().lower()
                     if system == "darwin" and shutil.which("brew"):
-                        subprocess.run(["brew", "install", "rclone"], capture_output=True, timeout=120)
+                        subprocess.run(["brew", "install", "rclone"], capture_output=True, timeout=RCLONE_INSTALL_TIMEOUT_SEC)
                     elif system in ("darwin", "linux"):
                         subprocess.run(
                             ["bash", "-c", "curl -s https://rclone.org/install.sh | sudo bash"],
-                            capture_output=True, timeout=120
+                            capture_output=True, timeout=RCLONE_INSTALL_TIMEOUT_SEC
                         )
                     path = find_rclone()
                     self._send_json({"ok": path is not None, "path": path or ""})
@@ -3445,8 +3725,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = self._read_body()
             if body:
                 source = body.get("source", "")
+                if not validate_rclone_input(source, "source"):
+                    self._send_json({"ok": False, "msg": "Invalid source"}, 400)
+                    return
                 try:
-                    result = subprocess.run(["rclone", "size", source, "--json"], capture_output=True, text=True, timeout=60)
+                    result = subprocess.run(["rclone", "size", source, "--json"], capture_output=True, text=True, timeout=RCLONE_PREVIEW_TIMEOUT_SEC)
                     if result.returncode == 0:
                         data = json.loads(result.stdout)
                         size_bytes = data.get("bytes", 0)
@@ -3483,7 +3766,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if origin in allowed_origins:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
         self.end_headers()
 
     def log_message(self, format, *args):
@@ -3498,6 +3781,11 @@ def start_transfer_from_wizard(body):
     detached subprocess (start_new_session=True so it survives if
     CloudMirror exits) -> return PID to the wizard for dashboard redirect.
     """
+    with _transfer_lock:
+        return _start_transfer_from_wizard_locked(body)
+
+
+def _start_transfer_from_wizard_locked(body):
     global RCLONE_CMD, TRANSFER_ACTIVE
 
     if TRANSFER_ACTIVE or is_rclone_running():
@@ -3507,7 +3795,7 @@ def start_transfer_from_wizard(body):
     dest = body.get("dest", "")
     try:
         transfers = int(body.get("transfers", "8"))
-        if not (1 <= transfers <= 64):
+        if not (1 <= transfers <= MAX_TRANSFERS):
             transfers = 8
     except (ValueError, TypeError):
         transfers = 8
@@ -3525,7 +3813,7 @@ def start_transfer_from_wizard(body):
     if not validate_rclone_input(dest, "dest"):
         return {"ok": False, "msg": "Invalid input"}
     for excl in excludes:
-        if not validate_rclone_input(excl, "exclude"):
+        if not validate_exclude_pattern(excl):
             return {"ok": False, "msg": "Invalid input"}
 
     # Verify local paths exist to catch typos early and prevent path traversal
@@ -3545,7 +3833,7 @@ def start_transfer_from_wizard(body):
         "--checkers=16",
         f"--log-file={LOG_FILE}",
         "--log-level=INFO",
-        "--stats=30s",
+        "--stats=10s",
         "--stats-log-level=INFO",
     ]
 
@@ -3564,6 +3852,9 @@ def start_transfer_from_wizard(body):
 
     if bw_limit and validate_rclone_input(bw_limit, "bw_limit"):
         RCLONE_CMD.append(f"--bwlimit={bw_limit}")
+
+    if body.get("checksum"):
+        RCLONE_CMD.append("--checksum")
 
     # S6: Save RCLONE_CMD to state but strip credential flags
     safe_cmd = [arg for arg in RCLONE_CMD if not any(secret in arg.lower() for secret in ['password', 'pass', 'user', 'token', 'key=', 'secret'])]
@@ -3588,7 +3879,7 @@ def start_transfer_from_wizard(body):
 
 def start_dashboard(start_rclone=False):
     """Start the web dashboard and optionally the rclone process."""
-    global state, TRANSFER_ACTIVE, RCLONE_CMD, rclone_pid
+    global state, TRANSFER_ACTIVE, RCLONE_CMD, rclone_pid, PORT
 
     # Load RCLONE_CMD from state if not set (enables resume after restart)
     with state_lock:
@@ -3629,21 +3920,30 @@ def start_dashboard(start_rclone=False):
     print("  Press Ctrl+C to stop the server.")
     print()
 
-    # Try to open browser automatically
+    server = None
+    for try_port in range(PORT, PORT + 5):
+        try:
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", try_port), Handler)
+            if try_port != PORT:
+                print(f"  Port {PORT} was busy, using port {try_port} instead.")
+                PORT = try_port
+            break
+        except OSError as e:
+            if ("Address already in use" in str(e) or e.errno == 48) and try_port < PORT + 4:
+                continue
+            if "Address already in use" in str(e) or e.errno == 48:
+                print(f"\n  Error: Ports {PORT}-{PORT+4} are all in use.")
+                print(f"  Please stop the other process(es) and try again.\n")
+                sys.exit(1)
+            raise
+    if server is None:
+        print(f"\n  Error: Could not bind to any port in range {PORT}-{PORT+4}.\n")
+        sys.exit(1)
+    # Try to open browser automatically (after port binding succeeds)
     try:
         webbrowser.open(f"http://localhost:{PORT}")
     except Exception:
         pass
-
-    try:
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    except OSError as e:
-        if "Address already in use" in str(e) or e.errno == 48:
-            print(f"\n  Error: Port {PORT} is already in use.")
-            print(f"  Either stop the other process or set a different port:")
-            print(f"  Open the file and change PORT = {PORT} to another value.\n")
-            sys.exit(1)
-        raise
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -3685,7 +3985,7 @@ def parse_cli_args(args):
         "rclone", "copy", source, dest,
         f"--log-file={LOG_FILE}",
         "--log-level=INFO",
-        "--stats=30s",
+        "--stats=10s",
         "--stats-log-level=INFO",
     ] + extra_flags
 
@@ -3696,7 +3996,15 @@ def parse_cli_args(args):
         RCLONE_CMD.append("--checkers=16")
 
 
+def _signal_handler(signum, frame):
+    print("\n  CloudMirror stopped.")
+    if TRANSFER_ACTIVE:
+        print("  (The file transfer continues in the background)")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _signal_handler)
     args = sys.argv[1:]
 
     if len(args) == 0:

@@ -2,6 +2,63 @@
 
 All notable changes to CloudMirror are documented here.
 
+## v0.4.0 (2026-03-19)
+
+### Security
+- CSRF protection with double-submit token pattern (SameSite=Strict cookie + X-CSRF-Token header)
+- DNS rebinding protection via Host header validation
+- Timing-safe CSRF comparison using `hmac.compare_digest()`
+- Input validation on all API endpoints including `/api/wizard/preview`
+- S3, MEGA, and Proton Drive credentials passed via environment variables (no longer visible in `ps aux`)
+- Stricter exclude pattern validation (rejects glob injection characters `{}[]`)
+- Transfer lock prevents TOCTOU race conditions on start/pause/resume
+- XSS protection on file type extensions, preview results, and confirm modals
+- State file credential filtering before persisting to disk
+
+### Performance
+- Incremental log scanning with byte offset tracking (no longer reads entire log every 30s)
+- Chart history cached in state (dashboard no longer re-parses full log on every 5s poll)
+- Pre-compiled regexes at module level for all hot-path parsing
+- Named constants replace magic numbers throughout
+- Extracted `downsample()`, `_parse_tail_stats()`, `_parse_active_transfers()`, `_parse_recent_files()`, `_parse_error_messages()` from monolithic functions
+- Capped history lists at 50,000 entries to prevent unbounded memory growth
+- Stats interval changed from 30s to 10s for more responsive dashboard
+
+### Added
+- Same-provider transfers (e.g., Google Drive to Google Drive with two accounts)
+- Checksum verification option in wizard ("Verify with checksums" checkbox)
+- Connection-lost banner when server becomes unreachable
+- Graceful SIGTERM handler (transfer continues in background)
+- Port auto-retry (tries ports 8787-8791 if default is busy)
+- System dark/light mode auto-detection via `prefers-color-scheme`
+- Live system theme change listener (follows OS dark mode toggle)
+- Styled confirm/error modals replacing native `alert()`/`confirm()`
+
+### Accessibility
+- `role="dialog"` and `aria-modal="true"` on all modals
+- Escape key closes modals
+- Focus trap and stacking guard on modals
+- `role="alert"` and `aria-live="assertive"` on connection-lost banner
+- `role="status"` and `aria-live="polite"` on toast notifications
+- `role="progressbar"` with dynamically updated `aria-valuenow` on progress bar
+- `role="radiogroup"` and `role="radio"` with `aria-checked` on speed options
+- `*:focus-visible` outline styles for keyboard navigation
+- Improved color contrast (WCAG AA compliant) for `--text-muted`, `--text-dim`, `--chart-text`
+- `aria-label` on theme toggles and chart SVGs
+
+### Fixed
+- Same-provider transfers now create separate rclone remotes (e.g., `gdrive` + `gdrive_dest`)
+- Port retry now correctly updates global PORT (CORS origins, browser URL, printed URL all match)
+- Incremental log scanner handles partial lines at seek boundaries
+- `pause_rclone()` now acquires transfer lock (prevents race with resume)
+- Event listener leak on "Other" provider input selection
+- Hardcoded `ro-RO` locale replaced with browser default
+- History modal no longer stacks on repeated clicks
+- Theme toggle icons consistent between dashboard and wizard (unicode, not emoji)
+- Checksum option shown in transfer summary before starting
+- Connection-lost banner adjusts page padding on mobile
+- State file validates `_running_*` types on load to prevent corruption
+
 ## v0.3.0 (2026-03-19)
 
 ### Added

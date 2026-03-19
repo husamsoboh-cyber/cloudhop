@@ -22,6 +22,9 @@ No technical knowledge needed -- just run and follow the prompts.
 - **Progress in browser tab** -- see percentage without switching tabs
 - **Smart error messages** -- translates rclone errors to plain English
 - **Desktop notification** when transfer completes
+- **Checksum verification** -- optional integrity check for important transfers
+- **Same-service transfers** -- copy between two accounts on the same provider
+- **Auto port retry** -- finds an open port if 8787 is busy
 - **Single Python file** -- no dependencies beyond Python 3.7+
 - Installs rclone automatically if missing
 
@@ -110,7 +113,7 @@ Yes. Use the Pause/Resume buttons in the dashboard, or close CloudMirror and run
 Run CloudMirror again. rclone resumes the transfer automatically, skipping files already copied.
 
 **Can I copy between two accounts on the same service?**
-Yes, but CloudMirror will show a warning since it requires careful remote naming to avoid confusion.
+Yes. CloudMirror automatically creates separate remote configurations for source and destination when they are the same provider (e.g., `gdrive` and `gdrive_dest`). You will be prompted to authorize both accounts.
 
 **Does it work on Windows?**
 Python and rclone both support Windows, but automatic rclone installation is only available on macOS and Linux. On Windows, install rclone manually first.
@@ -121,10 +124,24 @@ Transfer logs are written to `~/.cloudmirror/cloudmirror_<id>.log`. State is sav
 ## Security
 
 - The web server binds to **127.0.0.1 only** -- it is not accessible from other machines.
+- **CSRF protection** with double-submit token pattern (SameSite=Strict cookie + custom header).
+- **DNS rebinding protection** via Host header validation.
+- **Timing-safe token comparison** using `hmac.compare_digest()`.
 - CORS is restricted to localhost origins.
 - Request body size is capped at 10 KB to prevent abuse.
 - All user input is validated to prevent rclone flag injection.
+- Credentials passed via environment variables (not visible in process listing).
+- Transfer operations protected by mutex lock to prevent race conditions.
+- XSS protection on all dynamic content via HTML escaping.
 - No data is sent to any external server (other than the cloud providers you choose).
+
+## Accessibility
+
+- WCAG AA color contrast compliance in both dark and light themes.
+- Full keyboard navigation with visible focus indicators.
+- Screen reader support: ARIA roles, labels, and live regions on all interactive elements.
+- Styled modals with Escape key support and focus management.
+- System dark/light mode auto-detection.
 
 ## License
 
