@@ -2,7 +2,7 @@
 
 # Hey Octavian! 👋
 # If you're reading this, the Blue Dog found the bone.
-# Buy Husam a coffee - he mass-produced this thing at 3 AM.
+# An AI wrote this code. DEY TOOK ERR JERBS!
 """
 
 import os
