@@ -2,6 +2,32 @@
 
 All notable changes to CloudHop are documented here.
 
+## v0.7.0 (2026-03-20)
+
+### Added
+- **Smart Scheduling**: configure time windows for transfers (e.g., 22:00-06:00)
+  - Auto-pause outside the window, auto-resume when window opens
+  - Day-of-week selection (weekdays, weekends, custom)
+  - Per-window bandwidth limits
+- **Bandwidth limiter UI**: speed limit dropdown in wizard options
+- **Live bandwidth control**: change speed on the fly via rclone rc API
+- **macOS notifications**: desktop alerts on transfer complete, schedule pause/resume
+- **Server logging**: all events logged to `~/.cloudhop/cloudhop-server.log`
+- **Schedule indicator on dashboard**: shows current schedule status with colored badge
+- **Ruff linter + pre-commit hooks**: automated code quality checks on every commit
+
+### Fixed
+- Server crash on Windows when starting transfers (DETACHED_PROCESS fix)
+- Server dies when terminal is closed (SIGHUP ignore)
+- BrokenPipeError crashes from disconnected browser clients
+- "Connection lost" message now explains what happened and how to reconnect
+
+### Changed
+- Official cloud provider logos in wizard and landing page (Google Drive, OneDrive, Dropbox, MEGA, iCloud, Proton Drive, Amazon S3)
+- macOS installer is now a proper .app bundle (drag to Applications)
+- CI workflow builds .app bundle with icon, creates DMG with Applications shortcut
+- CI permissions fix for GitHub release uploads
+
 ## v0.6.1 (2026-03-19)
 
 ### Fixed

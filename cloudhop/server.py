@@ -361,6 +361,17 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             else:
                 logger.error("Transfer failed to start: %s", result.get("msg"))
             self._send_json(result)
+        elif self.path == "/api/bwlimit":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            limit = body.get("rate", "")
+            if not limit:
+                self._send_json({"ok": False, "msg": "Missing rate"}, 400)
+                return
+            result = self.manager.set_bandwidth(limit)
+            self._send_json(result)
         else:
             self.send_response(404)
             self.end_headers()

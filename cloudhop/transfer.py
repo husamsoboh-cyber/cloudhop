@@ -263,6 +263,8 @@ class TransferManager:
             return
 
         in_window = self.is_in_schedule_window()
+        bw_limit_in_window = schedule.get("bw_limit_in_window", "")
+        bw_limit_out_window = schedule.get("bw_limit_out_window", "0")
 
         if in_window and not self.is_rclone_running() and self.rclone_cmd:
             # Window opened - resume transfer
@@ -274,17 +276,24 @@ class TransferManager:
                     notify("CloudHop", "Transfer resumed (schedule window opened)")
                 except Exception:
                     pass
+        elif in_window and self.is_rclone_running() and bw_limit_in_window:
+            # In window with bandwidth limit - apply in-window limit
+            self.set_bandwidth(bw_limit_in_window)
 
         elif not in_window and self.is_rclone_running():
-            # Window closed - pause transfer
-            result = self.pause()
-            if result.get("ok"):
-                try:
-                    from .notify import notify
+            if bw_limit_out_window and bw_limit_out_window != "0":
+                # Out of window with bandwidth limit - throttle instead of pausing
+                self.set_bandwidth(bw_limit_out_window)
+            else:
+                # Out of window, no bandwidth limit - pause transfer
+                result = self.pause()
+                if result.get("ok"):
+                    try:
+                        from .notify import notify
 
-                    notify("CloudHop", "Transfer paused (outside schedule window)")
-                except Exception:
-                    pass
+                        notify("CloudHop", "Transfer paused (outside schedule window)")
+                    except Exception:
+                        pass
 
     # ---- state persistence ---------------------------------------------------
 
@@ -1286,6 +1295,26 @@ class TransferManager:
         except Exception as e:
             return {"ok": False, "msg": f"Failed to start: {str(e)}"}
 
+    def set_bandwidth(self, limit: str) -> Dict[str, Any]:
+        """Change rclone bandwidth limit on the fly via rc API."""
+        if not self.is_rclone_running():
+            return {"ok": False, "msg": "rclone not running"}
+        try:
+            result = subprocess.run(
+                ["rclone", "rc", "core/bwlimit", f"rate={limit}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                logger.info("Bandwidth changed to %s", limit)
+                return {"ok": True}
+            logger.warning("Bandwidth change failed: %s", result.stderr.strip())
+            return {"ok": False, "msg": result.stderr.strip()}
+        except Exception as e:
+            logger.error("Bandwidth change error: %s", e)
+            return {"ok": False, "msg": str(e)}
+
     # ---- start_transfer ------------------------------------------------------
 
     def start_transfer(self, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -1352,6 +1381,8 @@ class TransferManager:
             "--log-level=INFO",
             "--stats=10s",
             "--stats-log-level=INFO",
+            "--rc",
+            "--rc-no-auth",
         ]
 
         # Cloud-to-cloud transfers benefit from larger chunks and buffers
