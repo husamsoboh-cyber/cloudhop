@@ -174,9 +174,9 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/pause":
-            self._send_json(self.manager.pause_rclone())
+            self._send_json(self.manager.pause())
         elif self.path == "/api/resume":
-            self._send_json(self.manager.resume_rclone())
+            self._send_json(self.manager.resume())
         elif self.path == "/api/wizard/check-rclone":
             path = find_rclone()
             if path:
@@ -261,7 +261,7 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
-            result = self.manager.start_transfer_from_wizard(body)
+            result = self.manager.start_transfer(body)
             self._send_json(result)
         else:
             self.send_response(404)

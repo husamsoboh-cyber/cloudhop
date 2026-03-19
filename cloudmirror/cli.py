@@ -8,7 +8,7 @@ import http.server
 from typing import Any, List
 
 from .server import CloudMirrorHandler, CSRF_TOKEN
-from .transfer import TransferManager
+from .transfer import TransferManager, ensure_rclone
 from .utils import PORT
 
 
@@ -35,7 +35,7 @@ def main() -> None:
         start_dashboard(manager, start_rclone=False)
     else:
         # CLI mode for advanced users
-        manager.ensure_rclone()
+        ensure_rclone()
         parse_cli_args(manager, args)
         print()
         print("  CloudMirror - Advanced Mode")
@@ -81,7 +81,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
         print(f"  Transfer started (PID {proc.pid})")
         manager.transfer_active = True
 
-    port = manager.port
+    port = PORT
 
     print()
     print(f"  CloudMirror: http://localhost:{port}")
@@ -99,7 +99,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
             server = http.server.ThreadingHTTPServer(("127.0.0.1", try_port), CloudMirrorHandler)
             if try_port != port:
                 print(f"  Port {port} was busy, using port {try_port} instead.")
-                manager.port = try_port
+                port = try_port
             break
         except OSError as e:
             if ("Address already in use" in str(e) or e.errno == 48) and try_port < port + 4:
@@ -116,7 +116,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
 
     # Try to open browser automatically (after port binding succeeds)
     try:
-        webbrowser.open(f"http://localhost:{manager.port}")
+        webbrowser.open(f"http://localhost:{port}")
     except Exception:
         pass
 
