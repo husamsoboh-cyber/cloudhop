@@ -171,6 +171,18 @@ function toggleAdvanced() {
     arrow.classList.toggle('open');
 }
 
+// Schedule toggle
+(function() {
+  document.addEventListener('DOMContentLoaded', function() {
+    const schedEl = document.getElementById('scheduleEnabled');
+    if (schedEl) {
+      schedEl.addEventListener('change', function() {
+        document.getElementById('scheduleConfig').style.display = this.checked ? 'block' : 'none';
+      });
+    }
+  });
+})();
+
 // Restore wizard state after refresh
 (function() {
   try {
@@ -644,6 +656,26 @@ async function startTransfer() {
     clearTimeout(safetyTimeout);
     const data = await resp.json();
     if (data.ok) {
+      // Save schedule if enabled
+      const schedEnabled = document.getElementById('scheduleEnabled');
+      if (schedEnabled && schedEnabled.checked) {
+        const days = [];
+        document.querySelectorAll('#scheduleConfig [data-day]').forEach(cb => {
+          if (cb.checked) days.push(parseInt(cb.dataset.day));
+        });
+        fetch('/api/schedule', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+          body: JSON.stringify({
+            enabled: true,
+            start_time: document.getElementById('scheduleStart').value,
+            end_time: document.getElementById('scheduleEnd').value,
+            days: days,
+            bw_limit_in_window: document.getElementById('bwLimitInWindow').value,
+            bw_limit_out_window: '0',
+          })
+        });
+      }
       // Redirect to dashboard
       window.location.href = '/dashboard';
     } else {

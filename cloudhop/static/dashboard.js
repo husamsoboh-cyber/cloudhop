@@ -726,6 +726,33 @@ async function refresh() {
 
     checkNotifications(d);
 
+    // Fetch schedule status (every 30s is enough)
+    if (!window._lastScheduleFetch || Date.now() - window._lastScheduleFetch > 30000) {
+      window._lastScheduleFetch = Date.now();
+      fetch('/api/schedule')
+        .then(r => r.json())
+        .then(sched => {
+          const badge = document.getElementById('scheduleBadge');
+          const dot = document.getElementById('scheduleDot');
+          const text = document.getElementById('scheduleText');
+          if (!badge || !sched.enabled) {
+            if (badge) badge.style.display = 'none';
+            return;
+          }
+          badge.style.display = 'flex';
+          if (sched.in_window) {
+            dot.style.background = '#22c55e';
+            text.textContent = 'Scheduled: ' + sched.start_time + ' - ' + sched.end_time;
+            text.style.color = 'var(--text-dim)';
+          } else {
+            dot.style.background = '#f59e0b';
+            text.textContent = 'Paused until ' + sched.start_time;
+            text.style.color = '#f59e0b';
+          }
+        })
+        .catch(() => {});
+    }
+
   } catch(e) {
     console.error('Refresh error:', e);
     failCount++;

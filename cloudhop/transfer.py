@@ -35,9 +35,10 @@ Data flow
    numbers (bytes, files, %, ETA) that span all sessions.
 """
 
-import os
+import hashlib
 import json
 import logging
+import os
 import platform
 import shutil
 import signal
@@ -45,56 +46,49 @@ import subprocess
 import sys
 import threading
 import time
-import hashlib
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger("cloudhop.transfer")
 
 from .utils import (
-    validate_rclone_input,
-    validate_exclude_pattern,
-    _sanitize_rclone_error,
-    to_bytes,
-    fmt_bytes,
-    parse_elapsed,
-    fmt_duration,
-    downsample,
-    get_remote_label,
-    RE_TRANSFERRED_BYTES,
-    RE_TRANSFERRED_FILES,
-    RE_ELAPSED,
-    RE_ERRORS,
-    RE_SPEED,
-    RE_COPIED,
+    ERROR_TAIL_BYTES,
+    LOG_TAIL_BYTES,
+    MAX_HISTORY_ENTRIES,
+    MAX_TRANSFERS,
+    MIN_DOWNTIME_GAP_SEC,
+    MIN_SESSION_ELAPSED_SEC,
+    RCLONE_CHECK_TIMEOUT_SEC,
+    RCLONE_CONFIG_TIMEOUT_SEC,
+    RCLONE_SIZE_TIMEOUT_SEC,
     RE_ACTIVE,
     RE_ACTIVE2,
     RE_ACTIVE3,
-    RE_FULL_TRANSFER_ETA,
     RE_CHECKS_LISTED,
+    RE_COPIED,
     RE_COPIED_WITH_TS,
+    RE_ELAPSED,
     RE_ERROR_MSG,
-    RE_TIMESTAMP,
+    RE_ERRORS,
     RE_FILES_HIST,
-    LOG_TAIL_BYTES,
+    RE_FULL_TRANSFER_ETA,
+    RE_SPEED,
+    RE_TIMESTAMP,
+    RE_TRANSFERRED_BYTES,
+    RE_TRANSFERRED_FILES,
     RECENT_FILES_INITIAL_CHUNK,
     RECENT_FILES_MAX_CHUNK,
-    ERROR_TAIL_BYTES,
-    CHART_DOWNSAMPLE_TARGET,
     SCANNER_INTERVAL_SEC,
-    SCHEDULER_CHECK_INTERVAL_SEC,
-    MIN_SESSION_ELAPSED_SEC,
-    MAX_REQUEST_BODY_BYTES,
-    MIN_DOWNTIME_GAP_SEC,
-    RCLONE_SIZE_TIMEOUT_SEC,
-    RCLONE_CONFIG_TIMEOUT_SEC,
-    RCLONE_CHECK_TIMEOUT_SEC,
-    RCLONE_PREVIEW_TIMEOUT_SEC,
-    RCLONE_INSTALL_TIMEOUT_SEC,
-    MAX_TRANSFERS,
-    MAX_HISTORY_ENTRIES,
+    _sanitize_rclone_error,
+    downsample,
+    fmt_bytes,
+    fmt_duration,
+    get_remote_label,
+    parse_elapsed,
+    to_bytes,
+    validate_exclude_pattern,
+    validate_rclone_input,
 )
-
 
 # ---- Standalone rclone helpers (no mutable state needed) ---------------------
 
@@ -171,9 +165,7 @@ def get_existing_remotes() -> List[str]:
         )
         if result.returncode == 0:
             remotes = [
-                r.strip().rstrip(":")
-                for r in result.stdout.strip().split("\n")
-                if r.strip()
+                r.strip().rstrip(":") for r in result.stdout.strip().split("\n") if r.strip()
             ]
             return remotes
     except Exception:
@@ -198,9 +190,7 @@ class TransferManager:
     """
 
     def __init__(self, cm_dir: Optional[str] = None) -> None:
-        self.cm_dir: str = cm_dir or os.path.join(
-            os.path.expanduser("~"), ".cloudhop"
-        )
+        self.cm_dir: str = cm_dir or os.path.join(os.path.expanduser("~"), ".cloudhop")
         os.makedirs(self.cm_dir, mode=0o700, exist_ok=True)
 
         # Transfer state
@@ -229,9 +219,7 @@ class TransferManager:
         """Set unique log/state file paths and transfer label."""
         transfer_id = hashlib.md5(f"{source}:{dest}".encode()).hexdigest()[:8]
         self.log_file = os.path.join(self.cm_dir, f"cloudhop_{transfer_id}.log")
-        self.state_file = os.path.join(
-            self.cm_dir, f"cloudhop_{transfer_id}_state.json"
-        )
+        self.state_file = os.path.join(self.cm_dir, f"cloudhop_{transfer_id}_state.json")
         src_label = get_remote_label(source)
         dst_label = get_remote_label(dest)
         self.transfer_label = f"{src_label} -> {dst_label}"
@@ -282,6 +270,7 @@ class TransferManager:
             if result.get("ok"):
                 try:
                     from .notify import notify
+
                     notify("CloudHop", "Transfer resumed (schedule window opened)")
                 except Exception:
                     pass
@@ -292,6 +281,7 @@ class TransferManager:
             if result.get("ok"):
                 try:
                     from .notify import notify
+
                     notify("CloudHop", "Transfer paused (outside schedule window)")
                 except Exception:
                     pass
@@ -425,7 +415,7 @@ class TransferManager:
         if last_offset > 0 and content:
             first_nl = content.find("\n")
             if first_nl >= 0:
-                content = content[first_nl + 1:]
+                content = content[first_nl + 1 :]
             else:
                 content = ""
 
@@ -440,63 +430,33 @@ class TransferManager:
             with self.state_lock:
                 if not isinstance(self.state.get("_running_sessions"), list):
                     self.state["_running_sessions"] = []
-                sessions: List[Dict[str, Any]] = list(
-                    self.state.get("_running_sessions", [])
-                )
+                sessions: List[Dict[str, Any]] = list(self.state.get("_running_sessions", []))
                 current_session: Optional[Dict[str, Any]] = self.state.get(
                     "_running_current_session", None
                 )
-                if current_session is not None and not isinstance(
-                    current_session, dict
-                ):
+                if current_session is not None and not isinstance(current_session, dict):
                     current_session = None
                 if current_session is not None:
                     current_session = dict(current_session)
                 prev_elapsed: float = self.state.get("_running_prev_elapsed", -1)
-                file_types: Dict[str, int] = dict(
-                    self.state.get("all_file_types", {})
-                )
-                total_copied_set: Set[str] = set(
-                    self.state.get("_running_copied_files_set", [])
-                )
+                file_types: Dict[str, int] = dict(self.state.get("all_file_types", {}))
+                total_copied_set: Set[str] = set(self.state.get("_running_copied_files_set", []))
                 last_ts: Optional[str] = self.state.get("_running_last_ts", None)
                 prev_ts: Optional[str] = self.state.get("_running_prev_ts", None)
-                prev_transferred_bytes: float = self.state.get(
-                    "_running_prev_transferred_bytes", 0
-                )
-                prev_total_bytes: float = self.state.get(
-                    "_running_prev_total_bytes", 0
-                )
+                prev_transferred_bytes: float = self.state.get("_running_prev_transferred_bytes", 0)
+                prev_total_bytes: float = self.state.get("_running_prev_total_bytes", 0)
                 prev_files_done: int = self.state.get("_running_prev_files_done", 0)
-                prev_files_total: int = self.state.get(
-                    "_running_prev_files_total", 0
-                )
+                prev_files_total: int = self.state.get("_running_prev_files_total", 0)
                 # Chart history running state
-                speed_hist: List[Optional[float]] = list(
-                    self.state.get("_running_speed_hist", [])
-                )
-                pct_hist: List[Optional[float]] = list(
-                    self.state.get("_running_pct_hist", [])
-                )
-                files_hist: List[Optional[int]] = list(
-                    self.state.get("_running_files_hist", [])
-                )
+                speed_hist: List[Optional[float]] = list(self.state.get("_running_speed_hist", []))
+                pct_hist: List[Optional[float]] = list(self.state.get("_running_pct_hist", []))
+                files_hist: List[Optional[int]] = list(self.state.get("_running_files_hist", []))
                 chart_prev_el: float = self.state.get("_running_chart_prev_el", -1)
-                cumul_bytes_offset: float = self.state.get(
-                    "_running_cumul_bytes_offset", 0
-                )
-                cumul_files_offset: int = self.state.get(
-                    "_running_cumul_files_offset", 0
-                )
-                session_max_bytes: float = self.state.get(
-                    "_running_session_max_bytes", 0
-                )
-                session_max_files: int = self.state.get(
-                    "_running_session_max_files", 0
-                )
-                first_session_total: float = self.state.get(
-                    "_running_first_session_total", 0
-                )
+                cumul_bytes_offset: float = self.state.get("_running_cumul_bytes_offset", 0)
+                cumul_files_offset: int = self.state.get("_running_cumul_files_offset", 0)
+                session_max_bytes: float = self.state.get("_running_session_max_bytes", 0)
+                session_max_files: int = self.state.get("_running_session_max_files", 0)
+                first_session_total: float = self.state.get("_running_first_session_total", 0)
                 cur_transferred: float = 0
         else:
             sessions = []
@@ -537,9 +497,7 @@ class TransferManager:
                 cur_transferred = to_bytes(m_data.group(1))
                 cur_total = to_bytes(m_data.group(2))
                 if current_session is not None:
-                    prev_transferred_bytes = current_session.get(
-                        "final_transferred_bytes", 0
-                    )
+                    prev_transferred_bytes = current_session.get("final_transferred_bytes", 0)
                     prev_total_bytes = current_session.get("session_total_bytes", 0)
                     current_session["final_transferred_bytes"] = cur_transferred
                     current_session["session_total_bytes"] = cur_total
@@ -552,9 +510,7 @@ class TransferManager:
                 session_max_bytes = max(session_max_bytes, cur_transferred)
                 if first_session_total > 0:
                     global_pct_val = (
-                        (cumul_bytes_offset + cur_transferred)
-                        / first_session_total
-                        * 100
+                        (cumul_bytes_offset + cur_transferred) / first_session_total * 100
                     )
                     pct_hist.append(round(min(global_pct_val, 100), 1))
                 spd_str = m_data.group(4)
@@ -623,13 +579,9 @@ class TransferManager:
                     and session_bytes_changed
                 ):
                     if current_session:
-                        current_session["end_time"] = current_session.get(
-                            "last_ts", ""
-                        )
+                        current_session["end_time"] = current_session.get("last_ts", "")
                         current_session["final_elapsed_sec"] = prev_elapsed
-                        current_session[
-                            "final_transferred_bytes"
-                        ] = prev_transferred_bytes
+                        current_session["final_transferred_bytes"] = prev_transferred_bytes
                         current_session["session_total_bytes"] = prev_total_bytes
                         current_session["final_files_done"] = prev_files_done
                         current_session["final_files_total"] = prev_files_total
@@ -637,9 +589,7 @@ class TransferManager:
                     new_start = last_ts or ""
                     if new_start and elapsed_sec > 0:
                         try:
-                            ts_dt = datetime.strptime(
-                                new_start, "%Y/%m/%d %H:%M:%S"
-                            )
+                            ts_dt = datetime.strptime(new_start, "%Y/%m/%d %H:%M:%S")
                             real_start = ts_dt - timedelta(seconds=elapsed_sec)
                             new_start = real_start.strftime("%Y/%m/%d %H:%M:%S")
                         except Exception:
@@ -658,9 +608,7 @@ class TransferManager:
                     first_start = last_ts or ""
                     if first_start and elapsed_sec > 0:
                         try:
-                            ts_dt = datetime.strptime(
-                                first_start, "%Y/%m/%d %H:%M:%S"
-                            )
+                            ts_dt = datetime.strptime(first_start, "%Y/%m/%d %H:%M:%S")
                             real_start = ts_dt - timedelta(seconds=elapsed_sec)
                             first_start = real_start.strftime("%Y/%m/%d %H:%M:%S")
                         except Exception:
@@ -709,9 +657,7 @@ class TransferManager:
                     s.get("final_transferred_bytes", 0) < 1_000_000
                     and s is not finalized_sessions[-1]
                 ):
-                    deduped[-1]["end_time"] = s.get(
-                        "end_time", deduped[-1].get("end_time", "")
-                    )
+                    deduped[-1]["end_time"] = s.get("end_time", deduped[-1].get("end_time", ""))
                     deduped[-1]["final_elapsed_sec"] = max(
                         deduped[-1].get("final_elapsed_sec", 0),
                         s.get("final_elapsed_sec", 0),
@@ -721,16 +667,12 @@ class TransferManager:
                 cur_start_str = s.get("start_time", "")
                 if prev_start_str and cur_start_str:
                     try:
-                        t_prev = datetime.strptime(
-                            prev_start_str, "%Y/%m/%d %H:%M:%S"
-                        )
-                        t_cur = datetime.strptime(
-                            cur_start_str, "%Y/%m/%d %H:%M:%S"
-                        )
+                        t_prev = datetime.strptime(prev_start_str, "%Y/%m/%d %H:%M:%S")
+                        t_cur = datetime.strptime(cur_start_str, "%Y/%m/%d %H:%M:%S")
                         if abs((t_cur - t_prev).total_seconds()) < 300:
-                            if s.get("final_transferred_bytes", 0) > deduped[
-                                -1
-                            ].get("final_transferred_bytes", 0):
+                            if s.get("final_transferred_bytes", 0) > deduped[-1].get(
+                                "final_transferred_bytes", 0
+                            ):
                                 s["start_time"] = deduped[-1].get(
                                     "start_time", s.get("start_time", "")
                                 )
@@ -785,12 +727,8 @@ class TransferManager:
             original_total = cached_total
             original_files = cached_files
         elif finalized_sessions:
-            original_total = max(
-                (s.get("session_total_bytes", 0) or 0) for s in finalized_sessions
-            )
-            original_files = max(
-                (s.get("final_files_total", 0) or 0) for s in finalized_sessions
-            )
+            original_total = max((s.get("session_total_bytes", 0) or 0) for s in finalized_sessions)
+            original_files = max((s.get("final_files_total", 0) or 0) for s in finalized_sessions)
             # Fetch the authoritative source size by running ``rclone size``
             # once and caching the result.  This runs in a daemon thread
             # because it can take minutes for large remotes (e.g. 100 GB+
@@ -802,11 +740,7 @@ class TransferManager:
 
                 def _fetch_source_size() -> None:
                     try:
-                        src = (
-                            self.rclone_cmd[2]
-                            if len(self.rclone_cmd) > 2
-                            else ""
-                        )
+                        src = self.rclone_cmd[2] if len(self.rclone_cmd) > 2 else ""
                         if not src:
                             return
                         sz_result = subprocess.run(
@@ -818,12 +752,8 @@ class TransferManager:
                         if sz_result.returncode == 0:
                             data = json.loads(sz_result.stdout)
                             with self.state_lock:
-                                self.state["source_size_bytes"] = data.get(
-                                    "bytes", 0
-                                )
-                                self.state["source_size_files"] = data.get(
-                                    "count", 0
-                                )
+                                self.state["source_size_bytes"] = data.get("bytes", 0)
+                                self.state["source_size_files"] = data.get("count", 0)
                             self.save_state()
                     except Exception:
                         pass
@@ -843,12 +773,8 @@ class TransferManager:
             try:
                 first_start_str = finalized_sessions[0].get("start_time", "")
                 if first_start_str:
-                    first_start_dt = datetime.strptime(
-                        first_start_str, "%Y/%m/%d %H:%M:%S"
-                    )
-                    wall_clock_sec = (
-                        datetime.now() - first_start_dt
-                    ).total_seconds()
+                    first_start_dt = datetime.strptime(first_start_str, "%Y/%m/%d %H:%M:%S")
+                    wall_clock_sec = (datetime.now() - first_start_dt).total_seconds()
                     if wall_clock_sec > 0 and cumulative_elapsed > wall_clock_sec:
                         cumulative_elapsed = wall_clock_sec
             except Exception:
@@ -1134,9 +1060,7 @@ class TransferManager:
             if orig_total > 0:
                 global_total = max(orig_total, session_based_total)
             else:
-                global_total = max(
-                    cur_total_bytes, session_based_total
-                )
+                global_total = max(cur_total_bytes, session_based_total)
 
             # Never artificially inflate total to match transferred -
             # if transferred > total, it means total is stale, not that
@@ -1154,20 +1078,14 @@ class TransferManager:
             if global_files_total > 0 and global_files_done > global_files_total:
                 global_files_done = global_files_total
 
-            session_elapsed_sec = parse_elapsed(
-                result.get("session_elapsed", "")
-            )
+            session_elapsed_sec = parse_elapsed(result.get("session_elapsed", ""))
             global_elapsed_sec = cumul_elapsed + session_elapsed_sec
 
             # FIX 3 (parse_current): Cap active time at wall clock time
             if sessions:
                 try:
-                    first_start_pc = datetime.strptime(
-                        sessions[0]["start"], "%Y/%m/%d %H:%M:%S"
-                    )
-                    wall_sec_pc = (
-                        datetime.now() - first_start_pc
-                    ).total_seconds()
+                    first_start_pc = datetime.strptime(sessions[0]["start"], "%Y/%m/%d %H:%M:%S")
+                    wall_sec_pc = (datetime.now() - first_start_pc).total_seconds()
                     if wall_sec_pc > 0 and global_elapsed_sec > wall_sec_pc:
                         global_elapsed_sec = wall_sec_pc
                 except Exception:
@@ -1180,9 +1098,7 @@ class TransferManager:
 
             files_pct: float = 0
             if global_files_total > 0:
-                files_pct = round(
-                    global_files_done / global_files_total * 100, 1
-                )
+                files_pct = round(global_files_done / global_files_total * 100, 1)
                 files_pct = min(files_pct, 100)
 
             result["global_transferred"] = fmt_bytes(global_transferred)
@@ -1209,9 +1125,9 @@ class TransferManager:
                 s_end = s.get("end", "")
                 if s_start and s_elapsed > 0:
                     try:
-                        real_end = datetime.strptime(
-                            s_start, "%Y/%m/%d %H:%M:%S"
-                        ) + timedelta(seconds=s_elapsed)
+                        real_end = datetime.strptime(s_start, "%Y/%m/%d %H:%M:%S") + timedelta(
+                            seconds=s_elapsed
+                        )
                         s_end = real_end.strftime("%Y/%m/%d %H:%M:%S")
                     except Exception:
                         pass
@@ -1234,15 +1150,9 @@ class TransferManager:
                 cur_start = sessions[i].get("start", "")
                 if prev_start and cur_start:
                     try:
-                        t_prev_start = datetime.strptime(
-                            prev_start, "%Y/%m/%d %H:%M:%S"
-                        )
-                        t_prev_real_end = t_prev_start + timedelta(
-                            seconds=prev_elapsed_val
-                        )
-                        t_cur_start = datetime.strptime(
-                            cur_start, "%Y/%m/%d %H:%M:%S"
-                        )
+                        t_prev_start = datetime.strptime(prev_start, "%Y/%m/%d %H:%M:%S")
+                        t_prev_real_end = t_prev_start + timedelta(seconds=prev_elapsed_val)
+                        t_cur_start = datetime.strptime(cur_start, "%Y/%m/%d %H:%M:%S")
                         gap = (t_cur_start - t_prev_real_end).total_seconds()
                         if gap > MIN_DOWNTIME_GAP_SEC:
                             downtimes.append(
@@ -1250,9 +1160,7 @@ class TransferManager:
                                     "after_session": i,
                                     "duration": fmt_duration(gap),
                                     "duration_sec": gap,
-                                    "from": t_prev_real_end.strftime(
-                                        "%Y/%m/%d %H:%M:%S"
-                                    ),
+                                    "from": t_prev_real_end.strftime("%Y/%m/%d %H:%M:%S"),
                                     "to": cur_start,
                                 }
                             )
@@ -1262,9 +1170,7 @@ class TransferManager:
 
             if sessions:
                 try:
-                    first_start = datetime.strptime(
-                        sessions[0]["start"], "%Y/%m/%d %H:%M:%S"
-                    )
+                    first_start = datetime.strptime(sessions[0]["start"], "%Y/%m/%d %H:%M:%S")
                     wall_sec = (datetime.now() - first_start).total_seconds()
                     result["wall_clock"] = fmt_duration(wall_sec)
                     result["wall_clock_sec"] = wall_sec
@@ -1279,9 +1185,7 @@ class TransferManager:
                     result["uptime_pct"] = 0
 
             result["all_file_types"] = self.state.get("all_file_types", {})
-            result["total_copied_count"] = self.state.get(
-                "total_copied_count", 0
-            )
+            result["total_copied_count"] = self.state.get("total_copied_count", 0)
             result["transfer_label"] = self.transfer_label
 
             daily: Dict[str, float] = {}
@@ -1371,8 +1275,7 @@ class TransferManager:
             }
             if platform.system().lower() == "windows":
                 popen_kwargs["creationflags"] = (
-                    subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS
+                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
                 )
             else:
                 popen_kwargs["start_new_session"] = True
@@ -1499,8 +1402,7 @@ class TransferManager:
             }
             if platform.system().lower() == "windows":
                 popen_kwargs["creationflags"] = (
-                    subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS
+                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
                 )
             else:
                 popen_kwargs["start_new_session"] = True
@@ -1601,11 +1503,7 @@ class TransferManager:
             cmd = ["rclone", "config", "create", name, provider_type]
 
         try:
-            run_env = (
-                env
-                if provider_type in ("s3", "mega", "protondrive")
-                else None
-            )
+            run_env = env if provider_type in ("s3", "mega", "protondrive") else None
             result = subprocess.run(
                 cmd,
                 capture_output=True,

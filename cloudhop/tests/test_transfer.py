@@ -3,16 +3,13 @@
 import json
 import os
 import signal
-import tempfile
 import textwrap
 import threading
-import time
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cloudhop.transfer import TransferManager, remote_exists, get_existing_remotes
-
+from cloudhop.transfer import TransferManager, get_existing_remotes, remote_exists
 
 # ---------------------------------------------------------------------------
 # Realistic fake rclone log content
@@ -80,6 +77,7 @@ FAKE_LOG_EMPTY = ""
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def manager(tmp_path):
     """Create a TransferManager with a temporary directory."""
@@ -112,7 +110,6 @@ def manager_with_two_session_log(tmp_path):
 
 
 class TestStateManagement:
-
     def test_load_state_default(self, manager):
         """When no state file exists, _load_state returns the default dict."""
         state = manager.state
@@ -214,7 +211,6 @@ class TestStateManagement:
 
 
 class TestTransferControl:
-
     def test_is_rclone_running_no_pid(self, manager):
         """Returns False when no pid is tracked."""
         manager.rclone_pid = None
@@ -330,17 +326,21 @@ class TestTransferControl:
 
     def test_start_transfer_rejects_flags(self, manager):
         """start_transfer rejects source/dest starting with --."""
-        result = manager.start_transfer({
-            "source": "--config=/etc/passwd",
-            "dest": "/tmp/safe",
-        })
+        result = manager.start_transfer(
+            {
+                "source": "--config=/etc/passwd",
+                "dest": "/tmp/safe",
+            }
+        )
         assert result["ok"] is False
         assert "Invalid" in result["msg"]
 
-        result = manager.start_transfer({
-            "source": "/tmp/safe",
-            "dest": "--some-flag",
-        })
+        result = manager.start_transfer(
+            {
+                "source": "/tmp/safe",
+                "dest": "--some-flag",
+            }
+        )
         assert result["ok"] is False
 
     @patch("subprocess.Popen")
@@ -351,24 +351,26 @@ class TestTransferControl:
         mock_proc.pid = 4444
         mock_popen.return_value = mock_proc
 
-        result = manager.start_transfer({
-            "source": "/local/photos",
-            "dest": "gdrive:backup",
-            "source_type": "local",
-            "dest_type": "drive",
-            "transfers": "4",
-            "excludes": ["node_modules"],
-            "bw_limit": "10M",
-            "checksum": True,
-        })
+        result = manager.start_transfer(
+            {
+                "source": "/local/photos",
+                "dest": "gdrive:backup",
+                "source_type": "local",
+                "dest_type": "drive",
+                "transfers": "4",
+                "excludes": ["node_modules"],
+                "bw_limit": "10M",
+                "checksum": True,
+            }
+        )
         assert result["ok"] is True
         assert result["pid"] == 4444
 
         cmd = mock_popen.call_args[0][0]
-        assert "rclone" == cmd[0]
-        assert "copy" == cmd[1]
-        assert "/local/photos" == cmd[2]
-        assert "gdrive:backup" == cmd[3]
+        assert cmd[0] == "rclone"
+        assert cmd[1] == "copy"
+        assert cmd[2] == "/local/photos"
+        assert cmd[3] == "gdrive:backup"
         assert "--transfers=4" in cmd
         assert "--checksum" in cmd
         assert "--bwlimit=10M" in cmd
@@ -382,12 +384,14 @@ class TestTransferControl:
         mock_proc.pid = 5555
         mock_popen.return_value = mock_proc
 
-        manager.start_transfer({
-            "source": "gdrive:src",
-            "dest": "onedrive:dst",
-            "source_type": "drive",
-            "dest_type": "onedrive",
-        })
+        manager.start_transfer(
+            {
+                "source": "gdrive:src",
+                "dest": "onedrive:dst",
+                "source_type": "drive",
+                "dest_type": "onedrive",
+            }
+        )
         cmd = mock_popen.call_args[0][0]
         assert "--drive-chunk-size=256M" in cmd
         assert "--buffer-size=128M" in cmd
@@ -398,24 +402,28 @@ class TestTransferControl:
         manager.transfer_active = True
         manager.rclone_pid = 1111
 
-        result = manager.start_transfer({
-            "source": "/tmp/a",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-        })
+        result = manager.start_transfer(
+            {
+                "source": "/tmp/a",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+            }
+        )
         assert result["ok"] is False
         assert "already running" in result["msg"]
 
     def test_start_transfer_rejects_invalid_excludes(self, manager):
         """start_transfer rejects exclude patterns with shell injection chars."""
-        result = manager.start_transfer({
-            "source": "/tmp/a",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-            "excludes": ["valid", "bad{pattern}"],
-        })
+        result = manager.start_transfer(
+            {
+                "source": "/tmp/a",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+                "excludes": ["valid", "bad{pattern}"],
+            }
+        )
         assert result["ok"] is False
 
     @patch("subprocess.Popen")
@@ -426,24 +434,28 @@ class TestTransferControl:
         mock_proc.pid = 6666
         mock_popen.return_value = mock_proc
 
-        manager.start_transfer({
-            "source": "/tmp/a",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-            "transfers": "not_a_number",
-        })
+        manager.start_transfer(
+            {
+                "source": "/tmp/a",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+                "transfers": "not_a_number",
+            }
+        )
         cmd = mock_popen.call_args[0][0]
         assert "--transfers=8" in cmd
 
     def test_start_transfer_nonexistent_local_source(self, manager):
         """start_transfer rejects a local source path that doesn't exist."""
-        result = manager.start_transfer({
-            "source": "/nonexistent/path/that/does/not/exist",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-        })
+        result = manager.start_transfer(
+            {
+                "source": "/nonexistent/path/that/does/not/exist",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+            }
+        )
         assert result["ok"] is False
         assert "not found" in result["msg"].lower() or "Path not found" in result["msg"]
 
@@ -454,7 +466,6 @@ class TestTransferControl:
 
 
 class TestLogParsing:
-
     def test_parse_current_no_log(self, manager):
         """parse_current returns error when no log file exists."""
         manager.log_file = "/nonexistent/path/nofile.log"
@@ -523,9 +534,7 @@ class TestLogParsing:
         with open(m.log_file, "r") as f:
             tail = f.read()
 
-        result, xfer_str, total_str, xfer_bytes, total_bytes, lines = (
-            m._parse_tail_stats(tail)
-        )
+        result, xfer_str, total_str, xfer_bytes, total_bytes, lines = m._parse_tail_stats(tail)
 
         # Last matching line: 1.000 GiB / 2.000 GiB
         assert xfer_bytes > 0
@@ -659,7 +668,6 @@ class TestLogParsing:
 
 
 class TestConfigureRemote:
-
     def test_configure_remote_local(self, manager):
         """Local provider returns ok immediately, no subprocess calls."""
         result = manager.configure_remote("mylocal", "local")
@@ -764,6 +772,7 @@ class TestConfigureRemote:
     def test_configure_remote_timeout(self, mock_run, mock_exists, manager):
         """Configuration timeout is handled gracefully."""
         import subprocess as sp
+
         mock_run.side_effect = sp.TimeoutExpired(cmd="rclone", timeout=120)
 
         result = manager.configure_remote("gdrive", "drive")
@@ -795,9 +804,9 @@ class TestConfigureRemote:
         """When MEGA lsd validation fails, remote is deleted and error returned."""
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="obscured\n", stderr=""),  # obscure
-            MagicMock(returncode=0, stdout="", stderr=""),            # config create
+            MagicMock(returncode=0, stdout="", stderr=""),  # config create
             MagicMock(returncode=1, stdout="", stderr="login failed\n"),  # lsd check fails
-            MagicMock(returncode=0, stdout="", stderr=""),            # config delete
+            MagicMock(returncode=0, stdout="", stderr=""),  # config delete
         ]
 
         result = manager.configure_remote(
@@ -813,13 +822,10 @@ class TestConfigureRemote:
 
 
 class TestStandaloneHelpers:
-
     @patch("subprocess.run")
     def test_get_existing_remotes(self, mock_run):
         """get_existing_remotes parses rclone listremotes output."""
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="gdrive:\nonedrive:\nmega:\n"
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="gdrive:\nonedrive:\nmega:\n")
         remotes = get_existing_remotes()
         assert remotes == ["gdrive", "onedrive", "mega"]
 
@@ -845,15 +851,21 @@ class TestStandaloneHelpers:
 
 
 class TestEdgeCases:
-
     def test_default_state_keys(self, manager):
         """_default_state returns all required keys."""
         ds = manager._default_state()
         required = [
-            "sessions", "original_total_bytes", "original_total_files",
-            "last_elapsed_sec", "last_log_offset", "cumulative_transferred_bytes",
-            "cumulative_files_done", "cumulative_elapsed_sec", "all_file_types",
-            "total_copied_count", "speed_samples",
+            "sessions",
+            "original_total_bytes",
+            "original_total_files",
+            "last_elapsed_sec",
+            "last_log_offset",
+            "cumulative_transferred_bytes",
+            "cumulative_files_done",
+            "cumulative_elapsed_sec",
+            "all_file_types",
+            "total_copied_count",
+            "speed_samples",
         ]
         for key in required:
             assert key in ds
@@ -862,7 +874,7 @@ class TestEdgeCases:
         """TransferManager creates cm_dir if it doesn't exist."""
         new_dir = str(tmp_path / "new_cm_dir")
         assert not os.path.exists(new_dir)
-        m = TransferManager(cm_dir=new_dir)
+        TransferManager(cm_dir=new_dir)
         assert os.path.isdir(new_dir)
 
     def test_thread_safety_state_lock(self, manager):
@@ -891,12 +903,14 @@ class TestEdgeCases:
         mock_proc.pid = 1111
         mock_popen.return_value = mock_proc
 
-        manager.start_transfer({
-            "source": "/tmp/a",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-        })
+        manager.start_transfer(
+            {
+                "source": "/tmp/a",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+            }
+        )
 
         saved_cmd = manager.state.get("rclone_cmd", [])
         # No arg should contain password/secret/token etc
@@ -914,13 +928,15 @@ class TestEdgeCases:
         mock_popen.return_value = mock_proc
 
         # transfers=999 is out of range (MAX_TRANSFERS=64), should default to 8
-        manager.start_transfer({
-            "source": "/tmp/a",
-            "dest": "/tmp/b",
-            "source_type": "local",
-            "dest_type": "local",
-            "transfers": "999",
-        })
+        manager.start_transfer(
+            {
+                "source": "/tmp/a",
+                "dest": "/tmp/b",
+                "source_type": "local",
+                "dest_type": "local",
+                "transfers": "999",
+            }
+        )
         cmd = mock_popen.call_args[0][0]
         assert "--transfers=8" in cmd
 

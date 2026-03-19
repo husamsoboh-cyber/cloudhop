@@ -7,7 +7,7 @@
 
 import os
 import re
-from typing import List, Optional
+from typing import List
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ RECENT_FILES_MAX_CHUNK: int = 2000000
 ERROR_TAIL_BYTES: int = 100000
 CHART_DOWNSAMPLE_TARGET: int = 200
 SCANNER_INTERVAL_SEC: int = 30
+SCHEDULER_CHECK_INTERVAL_SEC: int = 60
 MIN_SESSION_ELAPSED_SEC: int = 300
 MAX_REQUEST_BODY_BYTES: int = 10240
 MIN_DOWNTIME_GAP_SEC: int = 60
@@ -45,9 +46,7 @@ RE_TRANSFERRED_BYTES = re.compile(
 
 # Matches: "Transferred:     42 / 1000, 4%"
 # Groups:  (files_done, files_total, pct)
-RE_TRANSFERRED_FILES = re.compile(
-    r"Transferred:\s+(\d+)\s*/\s*(\d+),\s*(\d+)%"
-)
+RE_TRANSFERRED_FILES = re.compile(r"Transferred:\s+(\d+)\s*/\s*(\d+),\s*(\d+)%")
 
 # Matches: "Elapsed time:     14h59m30.0s"
 RE_ELAPSED = re.compile(r"Elapsed time:\s*(.+)")
@@ -64,15 +63,11 @@ RE_COPIED = re.compile(r"INFO\s+:\s+(.+?):\s+Copied\s+\(")
 
 # Active transfer with full info: "* filename.mp4:  45% /1.2GiB, 8.5MiB/s, 2m30s"
 # Groups: (name, pct, size, speed, eta)
-RE_ACTIVE = re.compile(
-    r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s),\s*(\S+)"
-)
+RE_ACTIVE = re.compile(r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s),\s*(\S+)")
 
 # Active transfer without ETA: "* filename.mp4:  45% /1.2GiB, 8.5MiB/s"
 # Groups: (name, pct, size, speed)
-RE_ACTIVE2 = re.compile(
-    r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s)"
-)
+RE_ACTIVE2 = re.compile(r"\*\s+(.+?):\s+(\d+)%\s*/(\S+),\s*(\S+/s)")
 
 # Active transfer just started, no progress yet: "* filename.mp4: transferring"
 RE_ACTIVE3 = re.compile(r"\*\s+(.+?):\s+transferring")
@@ -87,9 +82,7 @@ RE_FULL_TRANSFER_ETA = re.compile(
 
 # Matches: "Checks:       500 / 1000, 50%, Listed 200"
 # Groups:  (checks_done, checks_total, listed)
-RE_CHECKS_LISTED = re.compile(
-    r"Checks:\s+(\d+)\s*/\s*(\d+).+Listed\s+(\d+)"
-)
+RE_CHECKS_LISTED = re.compile(r"Checks:\s+(\d+)\s*/\s*(\d+).+Listed\s+(\d+)")
 
 # Like RE_COPIED but captures the timestamp for "recently copied" list.
 # Matches: "2024/01/15 13:01:22 INFO  : myfile.pdf: Copied ("
@@ -104,15 +97,11 @@ RE_ERROR_MSG = re.compile(r"\d{2}:\d{2}:\d{2}\s+ERROR\s+:\s+(.+)")
 
 # Matches the leading timestamp on any rclone log line.
 # Matches: "2024/01/15 13:01:22"
-RE_TIMESTAMP = re.compile(
-    r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})"
-)
+RE_TIMESTAMP = re.compile(r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})")
 
 # Same as RE_TRANSFERRED_FILES - used specifically to build the files chart
 # history array (separate from the files progress display).
-RE_FILES_HIST = re.compile(
-    r"Transferred:\s+(\d+)\s*/\s*\d+,\s*\d+%"
-)
+RE_FILES_HIST = re.compile(r"Transferred:\s+(\d+)\s*/\s*\d+,\s*\d+%")
 RE_SIZE_VALUE = re.compile(r"([\d.]+)\s*(\S+)")
 RE_HOURS = re.compile(r"(\d+)h")
 RE_MINUTES = re.compile(r"(\d+)m")
@@ -142,7 +131,7 @@ def validate_exclude_pattern(value: str) -> bool:
     """Stricter validation for exclude patterns - also rejects shell glob injection chars."""
     if not validate_rclone_input(value, "exclude"):
         return False
-    if any(c in value for c in ('{', '}', '[', ']')):
+    if any(c in value for c in ("{", "}", "[", "]")):
         return False
     return True
 
@@ -151,17 +140,17 @@ def _sanitize_rclone_error(stderr: str) -> str:
     """Convert raw rclone error output to a user-friendly message."""
     if not stderr:
         return "Connection failed. Please try again."
-    first_line = stderr.strip().split('\n')[0]
+    first_line = stderr.strip().split("\n")[0]
     # Remove timestamp prefix
-    if 'ERROR' in first_line or 'NOTICE' in first_line:
-        parts = first_line.split(': ', 2)
+    if "ERROR" in first_line or "NOTICE" in first_line:
+        parts = first_line.split(": ", 2)
         first_line = parts[-1] if len(parts) > 1 else first_line
     # Common error translations
-    if 'address already in use' in first_line:
+    if "address already in use" in first_line:
         return "Authentication server busy. Please close other rclone processes and try again."
-    if 'token' in first_line.lower() or 'oauth' in first_line.lower():
+    if "token" in first_line.lower() or "oauth" in first_line.lower():
         return "Authentication failed. Please try again."
-    if 'timeout' in first_line.lower() or 'timed out' in first_line.lower():
+    if "timeout" in first_line.lower() or "timed out" in first_line.lower():
         return "Connection timed out. Please check your internet and try again."
     if len(first_line) > 150:
         return "Connection failed. Please try again."
@@ -196,11 +185,11 @@ def to_bytes(size_str: str) -> float:
 
 def fmt_bytes(b: float) -> str:
     """Format bytes to human readable string."""
-    if b >= 1024 ** 4:
+    if b >= 1024**4:
         return f"{b / 1024**4:.2f} TiB"
-    if b >= 1024 ** 3:
+    if b >= 1024**3:
         return f"{b / 1024**3:.2f} GiB"
-    if b >= 1024 ** 2:
+    if b >= 1024**2:
         return f"{b / 1024**2:.2f} MiB"
     if b >= 1024:
         return f"{b / 1024:.2f} KiB"

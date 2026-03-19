@@ -26,15 +26,16 @@ is busy it retries 8788, 8789, 8790, 8791 before giving up.  The chosen
 port is stored in ``CloudHopHandler.actual_port`` so CORS checks use the
 correct origin.
 """
-import sys
-import signal
-import platform
-import webbrowser
-import threading
+
 import http.server
 import logging
 import os
-from typing import Any, List
+import platform
+import signal
+import sys
+import threading
+import webbrowser
+from typing import List
 
 from .server import CloudHopHandler
 from .transfer import TransferManager, ensure_rclone
@@ -205,7 +206,7 @@ def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
             try:
                 attach_pid = int(arg.split("=", 1)[1])
             except ValueError:
-                print(f"  Error: --attach-pid requires a numeric PID")
+                print("  Error: --attach-pid requires a numeric PID")
                 sys.exit(1)
         elif arg.startswith("--attach-log="):
             attach_log = arg.split("=", 1)[1]
@@ -237,7 +238,10 @@ def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
     manager.set_transfer_paths(source, dest)
 
     manager.rclone_cmd = [
-        "rclone", "copy", source, dest,
+        "rclone",
+        "copy",
+        source,
+        dest,
         f"--log-file={manager.log_file}",
         "--log-level=INFO",
         "--stats=10s",

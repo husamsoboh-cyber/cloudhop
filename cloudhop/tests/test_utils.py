@@ -1,28 +1,28 @@
 """Tests for cloudhop.utils - 100% branch coverage target."""
 
 import pytest
+
 from cloudhop.utils import (
-    validate_rclone_input,
-    validate_exclude_pattern,
-    _sanitize_rclone_error,
-    to_bytes,
-    fmt_bytes,
-    parse_elapsed,
-    fmt_duration,
-    downsample,
-    get_remote_label,
     CHART_DOWNSAMPLE_TARGET,
-    PORT,
     LOG_TAIL_BYTES,
-    MIN_SESSION_ELAPSED_SEC,
     MAX_REQUEST_BODY_BYTES,
-    RE_TRANSFERRED_BYTES,
-    RE_TRANSFERRED_FILES,
+    MIN_SESSION_ELAPSED_SEC,
+    PORT,
     RE_ELAPSED,
     RE_ERRORS,
     RE_SPEED,
+    RE_TRANSFERRED_BYTES,
+    RE_TRANSFERRED_FILES,
+    _sanitize_rclone_error,
+    downsample,
+    fmt_bytes,
+    fmt_duration,
+    get_remote_label,
+    parse_elapsed,
+    to_bytes,
+    validate_exclude_pattern,
+    validate_rclone_input,
 )
-
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 

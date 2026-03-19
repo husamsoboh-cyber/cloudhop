@@ -1,10 +1,11 @@
 """Tests for cloudhop.server module."""
+
 import io
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from cloudhop.server import CloudHopHandler, CSRF_TOKEN
+from cloudhop.server import CSRF_TOKEN, CloudHopHandler
 
 
 class FakeSocket:

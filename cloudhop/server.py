@@ -30,34 +30,32 @@ Security model
   other ports cannot make cross-origin requests.
 - Static files are served with a directory-traversal check (``os.path.realpath``).
 """
+
+import hmac
 import http.server
 import json
-import hmac
-import secrets
-import os
 import logging
-import platform
-import shutil
+import os
+import secrets
 import subprocess
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("cloudhop.server")
 
+from .templates import render
 from .transfer import (
     TransferManager,
     find_rclone,
     get_existing_remotes,
     remote_exists,
 )
-from .templates import render
 from .utils import (
-    PORT,
-    MAX_REQUEST_BODY_BYTES,
-    RCLONE_INSTALL_TIMEOUT_SEC,
-    RCLONE_PREVIEW_TIMEOUT_SEC,
-    validate_rclone_input,
     _CM_DIR,
+    MAX_REQUEST_BODY_BYTES,
+    PORT,
+    RCLONE_PREVIEW_TIMEOUT_SEC,
     TRANSFER_LABEL,
+    validate_rclone_input,
 )
 
 CSRF_TOKEN = secrets.token_hex(32)
@@ -178,15 +176,17 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/status":
             self._send_json(self.manager.parse_current())
         elif self.path == "/api/wizard/status":
-            self._send_json({
-                "rclone_installed": find_rclone() is not None,
-                "remotes": get_existing_remotes(),
-                "home_dir": os.path.expanduser("~"),
-            })
+            self._send_json(
+                {
+                    "rclone_installed": find_rclone() is not None,
+                    "remotes": get_existing_remotes(),
+                    "home_dir": os.path.expanduser("~"),
+                }
+            )
         elif self.path == "/api/schedule":
             with self.manager.state_lock:
                 schedule = dict(self.manager.state.get("schedule", {}))
-            if hasattr(self.manager, 'is_in_schedule_window'):
+            if hasattr(self.manager, "is_in_schedule_window"):
                 schedule["in_window"] = self.manager.is_in_schedule_window()
             else:
                 schedule["in_window"] = True
@@ -198,12 +198,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     try:
                         with open(os.path.join(_CM_DIR, f)) as sf:
                             s = json.load(sf)
-                            history.append({
-                                "id": f.replace("cloudhop_", "").replace("_state.json", ""),
-                                "label": s.get("transfer_label", TRANSFER_LABEL),
-                                "sessions": len(s.get("sessions", [])),
-                                "cmd": s.get("rclone_cmd", []),
-                            })
+                            history.append(
+                                {
+                                    "id": f.replace("cloudhop_", "").replace("_state.json", ""),
+                                    "label": s.get("transfer_label", TRANSFER_LABEL),
+                                    "sessions": len(s.get("sessions", [])),
+                                    "cmd": s.get("rclone_cmd", []),
+                                }
+                            )
                     except Exception:
                         pass
             self._send_json(history)
@@ -246,7 +248,12 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             if path:
                 self._send_json({"ok": True, "path": path})
             else:
-                self._send_json({"ok": False, "msg": "rclone not found. Please install from https://rclone.org/install/"})
+                self._send_json(
+                    {
+                        "ok": False,
+                        "msg": "rclone not found. Please install from https://rclone.org/install/",
+                    }
+                )
         elif self.path == "/api/wizard/configure-remote":
             body = self._read_body()
             if body is None:
@@ -258,10 +265,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             password = body.get("password", None)
             if not name or not rtype:
                 self._send_json({"ok": False, "msg": "Missing name or type"})
-            elif not validate_rclone_input(name, "name") or not validate_rclone_input(rtype, "type"):
+            elif not validate_rclone_input(name, "name") or not validate_rclone_input(
+                rtype, "type"
+            ):
                 self._send_json({"ok": False, "msg": "Invalid input"})
             else:
-                result = self.manager.configure_remote(name, rtype, username=username, password=password)
+                result = self.manager.configure_remote(
+                    name, rtype, username=username, password=password
+                )
                 self._send_json(result)
         elif self.path == "/api/wizard/check-remote":
             body = self._read_body()
@@ -293,7 +304,9 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                             size_str = f"{size_bytes / 1048576:.1f} MiB"
                         else:
                             size_str = f"{size_bytes / 1024:.0f} KiB"
-                        self._send_json({"ok": True, "count": data.get("count", 0), "size": size_str})
+                        self._send_json(
+                            {"ok": True, "count": data.get("count", 0), "size": size_str}
+                        )
                     else:
                         self._send_json({"ok": False, "msg": "Could not scan source"})
                 except subprocess.TimeoutExpired:
@@ -308,6 +321,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             import re
+
             start_time = body.get("start_time", "22:00")
             end_time = body.get("end_time", "06:00")
             time_re = re.compile(r"^\d{2}:\d{2}$")
@@ -315,7 +329,9 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Invalid time format (use HH:MM)"}, 400)
                 return
             days = body.get("days", [0, 1, 2, 3, 4, 5, 6])
-            if not isinstance(days, list) or not all(isinstance(d, int) and 0 <= d <= 6 for d in days):
+            if not isinstance(days, list) or not all(
+                isinstance(d, int) and 0 <= d <= 6 for d in days
+            ):
                 self._send_json({"ok": False, "msg": "Invalid days"}, 400)
                 return
             bw_in = body.get("bw_limit_in_window", "")
@@ -336,7 +352,9 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
-            logger.info("Starting transfer: %s -> %s", body.get("source", "?"), body.get("dest", "?"))
+            logger.info(
+                "Starting transfer: %s -> %s", body.get("source", "?"), body.get("dest", "?")
+            )
             result = self.manager.start_transfer(body)
             if result.get("ok"):
                 logger.info("Transfer started (PID %s)", result.get("pid"))

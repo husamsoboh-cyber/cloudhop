@@ -250,6 +250,49 @@
           </div>
         </label>
       </div>
+      <div class="option-group" style="margin-top:24px;padding-top:24px;border-top:1px solid var(--border);">
+        <h4 style="margin-bottom:12px;font-weight:600;color:var(--text);">Schedule (optional)</h4>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:16px;">
+          <input type="checkbox" id="scheduleEnabled" style="width:18px;height:18px;accent-color:var(--primary);">
+          <span style="color:var(--text);">Only transfer during specific hours</span>
+        </label>
+        <div id="scheduleConfig" style="display:none;padding-left:28px;">
+          <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;">
+            <label style="color:var(--text-dim);font-size:14px;">
+              From <input type="time" id="scheduleStart" value="22:00"
+                style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:4px;">
+            </label>
+            <label style="color:var(--text-dim);font-size:14px;">
+              To <input type="time" id="scheduleEnd" value="06:00"
+                style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:4px;">
+            </label>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="0" checked> Mon</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="1" checked> Tue</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="2" checked> Wed</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="3" checked> Thu</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="4" checked> Fri</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="5" checked> Sat</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="6" checked> Sun</label>
+          </div>
+          <div style="margin-bottom:8px;">
+            <label style="color:var(--text-dim);font-size:14px;">
+              Speed limit during window
+              <select id="bwLimitInWindow" style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:8px;">
+                <option value="">Unlimited</option>
+                <option value="1M">1 MB/s</option>
+                <option value="2M">2 MB/s</option>
+                <option value="5M">5 MB/s</option>
+                <option value="10M">10 MB/s</option>
+                <option value="20M">20 MB/s</option>
+                <option value="50M">50 MB/s</option>
+                <option value="100M">100 MB/s</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
 </div>
     </div>
     <div class="btn-row">
