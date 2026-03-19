@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudHop - Move files between cloud services, privately</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── Reset ── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ── Tokens ── */
+:root {
+  --bg: #080810;
+  --surface: rgba(255,255,255,0.04);
+  --border: rgba(255,255,255,0.07);
+  --text: #b8bcc8;
+  --text-dim: #5e6275;
+  --text-bright: #f2f3f5;
+  --indigo: #6366f1;
+  --purple: #a855f7;
+  --cyan: #06b6d4;
+  --font: 'Inter', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ── Gradient mesh (variant C background) ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(99,102,241,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 20%, rgba(168,85,247,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 50% 80%, rgba(6,182,212,0.05) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Utility ── */
+.container { max-width: 1120px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+/* ── Nav ── */
+nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  z-index: 100;
+  padding: 16px 24px;
+  backdrop-filter: blur(20px);
+  background: rgba(8,8,16,0.7);
+  border-bottom: 1px solid var(--border);
+}
+nav .nav-inner {
+  max-width: 1120px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+}
+nav .logo {
+  font-weight: 700; font-size: 18px; color: var(--text-bright);
+  text-decoration: none; display: flex; align-items: center; gap: 8px;
+}
+nav .logo-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--indigo), var(--cyan));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+nav .nav-links { display: flex; align-items: center; gap: 28px; }
+nav .nav-links a {
+  color: var(--text-dim); text-decoration: none; font-size: 14px; font-weight: 500;
+  transition: color 0.2s;
+}
+nav .nav-links a:hover { color: var(--text-bright); }
+nav .nav-links .nav-cta {
+  padding: 8px 18px; border-radius: 8px; font-size: 13px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text-bright); transition: background 0.2s, border-color 0.2s;
+}
+nav .nav-links .nav-cta:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.14); }
+
+/* ════════════════════════════════════════════
+   HERO 1: Orbs + Badge
+   ════════════════════════════════════════════ */
+.hero {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  padding: 120px 24px 80px;
+}
+
+/* ── Floating Orbs ── */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.45;
+  pointer-events: none;
+  will-change: transform;
+}
+.orb--indigo {
+  width: 500px; height: 500px;
+  background: var(--indigo);
+  top: -10%; left: -5%;
+  animation: drift-indigo 18s ease-in-out infinite;
+}
+.orb--purple {
+  width: 420px; height: 420px;
+  background: var(--purple);
+  top: 20%; right: -8%;
+  animation: drift-purple 22s ease-in-out infinite;
+}
+.orb--cyan {
+  width: 380px; height: 380px;
+  background: var(--cyan);
+  bottom: -5%; left: 30%;
+  animation: drift-cyan 20s ease-in-out infinite;
+}
+
+@keyframes drift-indigo {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(60px, 40px) scale(1.05); }
+  50%      { transform: translate(30px, 80px) scale(0.95); }
+  75%      { transform: translate(-30px, 50px) scale(1.02); }
+}
+@keyframes drift-purple {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(-50px, 30px) scale(0.97); }
+  50%      { transform: translate(-70px, -40px) scale(1.04); }
+  75%      { transform: translate(20px, -20px) scale(0.98); }
+}
+@keyframes drift-cyan {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(40px, -50px) scale(1.03); }
+  50%      { transform: translate(-30px, -30px) scale(0.96); }
+  75%      { transform: translate(-60px, 20px) scale(1.01); }
+}
+
+/* ── Pill Badge ── */
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 6px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 32px;
+  backdrop-filter: blur(12px);
+}
+.hero-badge .pulse-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  position: relative;
+  flex-shrink: 0;
+}
+.hero-badge .pulse-dot::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: rgba(34,197,94,0.35);
+  animation: pulse-ring 2s ease-out infinite;
+}
+@keyframes pulse-ring {
+  0%   { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ── Hero Content ── */
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 780px;
+}
+.hero h1 {
+  font-size: clamp(40px, 6vw, 72px);
+  font-weight: 800;
+  line-height: 1.08;
+  color: var(--text-bright);
+  letter-spacing: -0.03em;
+  margin-bottom: 24px;
+}
+.hero h1 .gradient-word {
+  background: linear-gradient(135deg, var(--indigo), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero .subtitle {
+  font-size: 18px;
+  line-height: 1.7;
+  color: var(--text);
+  max-width: 560px;
+  margin: 0 auto 40px;
+}
+
+/* ── Hero Buttons ── */
+.hero-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-size: 15px; font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+  background: linear-gradient(135deg, var(--indigo), var(--purple));
+  border: none; cursor: pointer;
+  position: relative;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 0 30px rgba(99,102,241,0.3), 0 0 60px rgba(99,102,241,0.1);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 40px rgba(99,102,241,0.45), 0 0 80px rgba(99,102,241,0.15);
+}
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-size: 15px; font-weight: 600;
+  color: var(--text-bright);
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); }
+.btn-code {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  font-family: var(--mono);
+  font-size: 13px; font-weight: 500;
+  color: var(--cyan);
+  text-decoration: none;
+  background: rgba(6,182,212,0.06);
+  border: 1px solid rgba(6,182,212,0.15);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-code:hover { background: rgba(6,182,212,0.1); border-color: rgba(6,182,212,0.25); }
+
+/* ════════════════════════════════════════════
+   Floating Screenshot
+   ════════════════════════════════════════════ */
+.screenshot-section {
+  padding: 0 24px 100px;
+  position: relative; z-index: 1;
+}
+.floating-screen {
+  max-width: 960px;
+  margin: 0 auto;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 40px 120px rgba(0,0,0,0.5), 0 0 80px rgba(99,102,241,0.06);
+}
+.screen-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--border);
+}
+.screen-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+}
+.screen-dot:first-child { background: rgba(255,87,87,0.6); }
+.screen-dot:nth-child(2) { background: rgba(255,189,46,0.6); }
+.screen-dot:nth-child(3) { background: rgba(39,201,63,0.6); }
+.screen-body {
+  padding: 32px;
+  min-height: 380px;
+  display: flex;
+  gap: 24px;
+}
+.screen-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.screen-sidebar-item {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex; align-items: center; gap: 10px;
+}
+.screen-sidebar-item.active {
+  background: rgba(99,102,241,0.1);
+  color: var(--indigo);
+}
+.screen-sidebar-icon {
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+}
+.screen-sidebar-item.active .screen-sidebar-icon {
+  background: rgba(99,102,241,0.2);
+}
+.screen-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.screen-transfer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+}
+.screen-cloud-icon {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 600;
+  flex-shrink: 0;
+}
+.screen-cloud-icon.gdrive { background: rgba(66,133,244,0.15); color: #4285f4; }
+.screen-cloud-icon.s3 { background: rgba(255,153,0,0.15); color: #ff9900; }
+.screen-cloud-icon.drop { background: rgba(0,97,255,0.15); color: #0061ff; }
+.screen-cloud-icon.b2 { background: rgba(227,50,45,0.15); color: #e3322d; }
+.screen-transfer-arrow {
+  color: var(--text-dim); font-size: 14px; flex-shrink: 0;
+}
+.screen-transfer-info { flex: 1; }
+.screen-transfer-name { font-size: 13px; font-weight: 600; color: var(--text-bright); }
+.screen-transfer-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.screen-transfer-progress {
+  width: 100px; height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.screen-transfer-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--indigo), var(--cyan));
+}
+
+/* ════════════════════════════════════════════
+   Features Section
+   ════════════════════════════════════════════ */
+.features {
+  padding: 100px 24px;
+  position: relative; z-index: 1;
+}
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--indigo);
+  margin-bottom: 16px;
+}
+.section-title {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+  margin-bottom: 16px;
+  line-height: 1.15;
+}
+.section-subtitle {
+  font-size: 16px;
+  color: var(--text);
+  max-width: 540px;
+  line-height: 1.7;
+  margin-bottom: 56px;
+}
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.feature-card {
+  padding: 32px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 0.3s, background 0.3s;
+}
+.feature-card:hover {
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+.feature-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  margin-bottom: 20px;
+}
+.feature-icon.indigo { background: rgba(99,102,241,0.12); color: var(--indigo); }
+.feature-icon.purple { background: rgba(168,85,247,0.12); color: var(--purple); }
+.feature-icon.cyan   { background: rgba(6,182,212,0.12); color: var(--cyan); }
+.feature-icon.green  { background: rgba(34,197,94,0.12); color: #22c55e; }
+.feature-icon.amber  { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.feature-icon.rose   { background: rgba(244,63,94,0.12); color: #f43f5e; }
+.feature-card h3 {
+  font-size: 16px; font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 8px;
+}
+.feature-card p {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* ════════════════════════════════════════════
+   How It Works - Vertical Timeline
+   ════════════════════════════════════════════ */
+.how-it-works {
+  padding: 100px 24px;
+  position: relative; z-index: 1;
+}
+.timeline {
+  max-width: 600px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.timeline-step {
+  display: flex;
+  gap: 24px;
+  position: relative;
+  padding-bottom: 48px;
+}
+.timeline-step:last-child { padding-bottom: 0; }
+.timeline-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 48px;
+}
+.timeline-number {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+  font-size: 14px; font-weight: 700;
+  color: var(--text-bright);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.timeline-step:nth-child(1) .timeline-number { border-color: rgba(99,102,241,0.3); color: var(--indigo); }
+.timeline-step:nth-child(2) .timeline-number { border-color: rgba(168,85,247,0.3); color: var(--purple); }
+.timeline-step:nth-child(3) .timeline-number { border-color: rgba(6,182,212,0.3); color: var(--cyan); }
+.timeline-connector {
+  width: 1px;
+  flex: 1;
+  background: linear-gradient(to bottom, var(--border), transparent);
+  margin-top: 8px;
+}
+.timeline-content {
+  padding-top: 10px;
+}
+.timeline-content h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 8px;
+}
+.timeline-content p {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+/* ════════════════════════════════════════════
+   Providers Bar
+   ════════════════════════════════════════════ */
+.providers {
+  padding: 60px 24px;
+  position: relative; z-index: 1;
+}
+.providers-inner {
+  text-align: center;
+  padding: 40px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.providers-inner p {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 24px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+.provider-logos {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.provider-logo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+.provider-logo:hover { opacity: 0.9; }
+
+/* ════════════════════════════════════════════
+   Privacy Quote
+   ════════════════════════════════════════════ */
+.privacy {
+  padding: 100px 24px;
+  position: relative; z-index: 1;
+}
+.privacy-inner {
+  max-width: 700px;
+  margin: 0 auto;
+  text-align: center;
+  position: relative;
+}
+.privacy-quote-mark {
+  font-size: 180px;
+  font-weight: 800;
+  line-height: 1;
+  color: rgba(99,102,241,0.07);
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  user-select: none;
+}
+.privacy blockquote {
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 600;
+  color: var(--text-bright);
+  line-height: 1.4;
+  margin-bottom: 20px;
+  position: relative;
+  letter-spacing: -0.01em;
+}
+.privacy .privacy-sub {
+  font-size: 15px;
+  color: var(--text-dim);
+  line-height: 1.7;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* ════════════════════════════════════════════
+   Download CTA Card
+   ════════════════════════════════════════════ */
+.download-section {
+  padding: 60px 24px 100px;
+  position: relative; z-index: 1;
+}
+.download-card {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 56px 48px;
+  border-radius: 20px;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(168,85,247,0.08), rgba(6,182,212,0.06));
+  border: 1px solid rgba(99,102,241,0.15);
+  position: relative;
+  overflow: hidden;
+}
+.download-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.12) 0%, transparent 70%);
+  pointer-events: none;
+}
+.download-card h2 {
+  font-size: clamp(26px, 3.5vw, 38px);
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 12px;
+  position: relative;
+  letter-spacing: -0.02em;
+}
+.download-card p {
+  font-size: 16px;
+  color: var(--text);
+  margin-bottom: 32px;
+  position: relative;
+}
+.download-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+/* ════════════════════════════════════════════
+   Footer
+   ════════════════════════════════════════════ */
+footer {
+  padding: 40px 24px;
+  border-top: 1px solid var(--border);
+  position: relative; z-index: 1;
+}
+.footer-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.footer-left {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.footer-links {
+  display: flex;
+  gap: 24px;
+}
+.footer-links a {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.footer-links a:hover { color: var(--text-bright); }
+
+/* ════════════════════════════════════════════
+   Responsive
+   ════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .features-grid { grid-template-columns: 1fr; }
+  .screen-sidebar { display: none; }
+  .screen-body { padding: 20px; }
+  .hero-buttons { flex-direction: column; align-items: center; }
+  .footer-inner { flex-direction: column; gap: 16px; text-align: center; }
+  nav .nav-links a:not(.nav-cta) { display: none; }
+}
+@media (max-width: 480px) {
+  .hero h1 { font-size: 32px; }
+  .download-card { padding: 36px 24px; }
+  .providers-inner { padding: 24px; }
+  .provider-logos { gap: 18px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Nav ── -->
+<nav>
+  <div class="nav-inner">
+    <a href="#" class="logo">
+      <div class="logo-icon">C</div>
+      CloudHop
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#privacy">Privacy</a>
+      <a href="https://github.com/husamsoboh-cyber/cloudhop" target="_blank">GitHub</a>
+      <a href="#download" class="nav-cta">Download</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ════════════════════════════════════════════
+     HERO 1: Orbs + Badge
+     ════════════════════════════════════════════ -->
+<section class="hero">
+  <!-- Floating Orbs -->
+  <div class="orb orb--indigo"></div>
+  <div class="orb orb--purple"></div>
+  <div class="orb orb--cyan"></div>
+
+  <div class="hero-content">
+    <!-- Pill Badge -->
+    <div class="hero-badge">
+      <span class="pulse-dot"></span>
+      Open source &amp; free forever
+    </div>
+
+    <h1>Move files between<br>cloud services, <span class="gradient-word">privately</span></h1>
+
+    <p class="subtitle">Free, private, no account needed. CloudHop runs on your machine and moves your files directly between 70+ cloud providers.</p>
+
+    <div class="hero-buttons">
+      <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/download/v0.6.0/CloudHop-0.6.0-mac.dmg" class="btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M17.13 12c-.5 3.5-2 5.5-5.13 8-3.13-2.5-4.63-4.5-5.13-8h3.13V7h4v5h3.13z"/></svg>
+        Download for Mac
+      </a>
+      <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/download/v0.6.0/CloudHop-main-windows.zip" class="btn-ghost">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+        Windows
+      </a>
+      <a href="https://pypi.org/project/cloudhop/" class="btn-code" target="_blank">$ pip install cloudhop</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── Floating Screenshot ── -->
+<section class="screenshot-section">
+  <div class="container">
+    <div class="floating-screen">
+      <div class="screen-bar">
+        <div class="screen-dot"></div>
+        <div class="screen-dot"></div>
+        <div class="screen-dot"></div>
+      </div>
+      <div class="screen-body">
+        <div class="screen-sidebar">
+          <div class="screen-sidebar-item active">
+            <div class="screen-sidebar-icon">T</div>
+            Transfers
+          </div>
+          <div class="screen-sidebar-item">
+            <div class="screen-sidebar-icon">R</div>
+            Remotes
+          </div>
+          <div class="screen-sidebar-item">
+            <div class="screen-sidebar-icon">E</div>
+            Explorer
+          </div>
+          <div class="screen-sidebar-item">
+            <div class="screen-sidebar-icon">S</div>
+            Sync
+          </div>
+          <div class="screen-sidebar-item">
+            <div class="screen-sidebar-icon">L</div>
+            Logs
+          </div>
+        </div>
+        <div class="screen-main">
+          <!-- Transfer 1 -->
+          <div class="screen-transfer">
+            <div class="screen-cloud-icon gdrive">G</div>
+            <div class="screen-transfer-arrow">&rarr;</div>
+            <div class="screen-cloud-icon s3">S3</div>
+            <div class="screen-transfer-info">
+              <div class="screen-transfer-name">Photos Backup</div>
+              <div class="screen-transfer-meta">14.2 GB / 18.7 GB &bull; 42 MB/s</div>
+            </div>
+            <div class="screen-transfer-progress">
+              <div class="screen-transfer-progress-bar" style="width:76%"></div>
+            </div>
+          </div>
+          <!-- Transfer 2 -->
+          <div class="screen-transfer">
+            <div class="screen-cloud-icon drop">D</div>
+            <div class="screen-transfer-arrow">&rarr;</div>
+            <div class="screen-cloud-icon b2">B2</div>
+            <div class="screen-transfer-info">
+              <div class="screen-transfer-name">Documents Archive</div>
+              <div class="screen-transfer-meta">3.1 GB / 3.1 GB &bull; Complete</div>
+            </div>
+            <div class="screen-transfer-progress">
+              <div class="screen-transfer-progress-bar" style="width:100%"></div>
+            </div>
+          </div>
+          <!-- Transfer 3 -->
+          <div class="screen-transfer">
+            <div class="screen-cloud-icon s3">S3</div>
+            <div class="screen-transfer-arrow">&rarr;</div>
+            <div class="screen-cloud-icon gdrive">G</div>
+            <div class="screen-transfer-info">
+              <div class="screen-transfer-name">Project Assets</div>
+              <div class="screen-transfer-meta">Queued &bull; 6.4 GB</div>
+            </div>
+            <div class="screen-transfer-progress">
+              <div class="screen-transfer-progress-bar" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything you need,<br>nothing you don't</h2>
+    <p class="section-subtitle">CloudHop wraps rclone in a clean interface so you can focus on moving files, not reading docs.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon indigo">&#x1f512;</div>
+        <h3>Fully Private</h3>
+        <p>No accounts, no telemetry, no tracking. Your credentials stay on your machine and never touch our servers.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon purple">&#x26a1;</div>
+        <h3>Parallel Transfers</h3>
+        <p>Multi-threaded transfers saturate your connection. Move terabytes in hours, not days.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon cyan">&#x1f310;</div>
+        <h3>70+ Providers</h3>
+        <p>S3, Google Drive, Dropbox, OneDrive, Backblaze B2, Azure, SFTP, and dozens more out of the box.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon green">&#x1f504;</div>
+        <h3>Real-time Sync</h3>
+        <p>Bi-directional sync watches for changes and keeps your clouds in perfect mirror.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon amber">&#x1f4e6;</div>
+        <h3>Built on rclone</h3>
+        <p>Battle-tested rclone engine under the hood. If rclone supports it, CloudHop supports it.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon rose">&#x1f3a8;</div>
+        <h3>Beautiful UI</h3>
+        <p>A native desktop app that feels right at home on macOS, Windows, and Linux.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How It Works ── -->
+<section class="how-it-works" id="how-it-works">
+  <div class="container">
+    <div class="section-label">How it works</div>
+    <h2 class="section-title">Three steps, zero friction</h2>
+    <p class="section-subtitle">No sign-ups, no cloud middlemen. Just download and go.</p>
+    <div class="timeline">
+      <div class="timeline-step">
+        <div class="timeline-line">
+          <div class="timeline-number">01</div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <h3>Install CloudHop</h3>
+          <p>Download the app or install via pip. CloudHop bundles rclone automatically -- nothing else to configure.</p>
+        </div>
+      </div>
+      <div class="timeline-step">
+        <div class="timeline-line">
+          <div class="timeline-number">02</div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <h3>Connect your clouds</h3>
+          <p>Add any provider with a guided setup. OAuth flows open in your browser; tokens are stored locally, encrypted.</p>
+        </div>
+      </div>
+      <div class="timeline-step">
+        <div class="timeline-line">
+          <div class="timeline-number">03</div>
+        </div>
+        <div class="timeline-content">
+          <h3>Move or sync</h3>
+          <p>Pick a source and destination, hit start. CloudHop handles retries, checksums, and bandwidth throttling.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Providers Bar ── -->
+<section class="providers">
+  <div class="container">
+    <div class="providers-inner">
+      <p>Works with 70+ cloud providers including</p>
+      <div class="provider-logos">
+        <span class="provider-logo">Google Drive</span>
+        <span class="provider-logo">Amazon S3</span>
+        <span class="provider-logo">Dropbox</span>
+        <span class="provider-logo">OneDrive</span>
+        <span class="provider-logo">Backblaze B2</span>
+        <span class="provider-logo">Azure Blob</span>
+        <span class="provider-logo">SFTP</span>
+        <span class="provider-logo">Wasabi</span>
+        <span class="provider-logo">Cloudflare R2</span>
+        <span class="provider-logo">MinIO</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Privacy Quote ── -->
+<section class="privacy" id="privacy">
+  <div class="container">
+    <div class="privacy-inner">
+      <div class="privacy-quote-mark">&ldquo;</div>
+      <blockquote>Your files go directly from cloud A to cloud B. We never see them, store them, or even know they exist.</blockquote>
+      <p class="privacy-sub">CloudHop runs entirely on your machine. There are no relay servers, no accounts, and no analytics. Your data is your data.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Download CTA ── -->
+<section class="download-section" id="download">
+  <div class="container">
+    <div class="download-card">
+      <h2>Ready to take control<br>of your cloud files?</h2>
+      <p>Free, open source, and private. Available on macOS, Windows, and Linux.</p>
+      <div class="download-buttons">
+        <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/download/v0.6.0/CloudHop-0.6.0-mac.dmg" class="btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download for Mac
+        </a>
+        <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/download/v0.6.0/CloudHop-main-windows.zip" class="btn-ghost">Windows</a>
+        <a href="https://pypi.org/project/cloudhop/" class="btn-code" target="_blank">$ pip install cloudhop</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-left">&copy; 2026 CloudHop. Open source under MIT License.</div>
+    <div class="footer-links">
+      <a href="https://github.com/husamsoboh-cyber/cloudhop" target="_blank">GitHub</a>
+      <a href="https://github.com/husamsoboh-cyber/cloudhop/releases" target="_blank">Releases</a>
+      <a href="https://github.com/husamsoboh-cyber/cloudhop/blob/main/LICENSE" target="_blank">MIT License</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
