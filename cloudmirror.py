@@ -553,6 +553,11 @@ def scan_full_log():
         first_session_total = 0
         cur_transferred = 0
 
+    # FIX 1: When doing incremental scanning, the first elapsed value in the
+    # new chunk should NOT trigger a session boundary because prev_elapsed is
+    # stale from the previous chunk and the comparison is meaningless.
+    first_elapsed_in_chunk = (last_offset > 0)
+
     for line in lines:
         ts_match = RE_TIMESTAMP.match(line)
         if ts_match:
@@ -609,7 +614,7 @@ def scan_full_log():
 
             # Chart history: session boundary detection for charts
             bytes_changed = abs(cur_transferred - prev_transferred_bytes) > 1_000_000 if cur_transferred else True
-            if chart_prev_el > MIN_SESSION_ELAPSED_SEC and elapsed_sec < chart_prev_el * 0.5 and bytes_changed:
+            if not first_elapsed_in_chunk and chart_prev_el > MIN_SESSION_ELAPSED_SEC and elapsed_sec < chart_prev_el * 0.5 and bytes_changed:
                 cumul_bytes_offset += session_max_bytes
                 cumul_files_offset += session_max_files
                 session_max_bytes = 0
@@ -624,7 +629,7 @@ def scan_full_log():
             # back-calculate the new session's true start time.
             # Also require transferred bytes changed by >1MB to avoid false boundaries.
             session_bytes_changed = abs(cur_transferred - prev_transferred_bytes) > 1_000_000 if cur_transferred else True
-            if prev_elapsed > MIN_SESSION_ELAPSED_SEC and elapsed_sec < prev_elapsed * 0.5 and session_bytes_changed:
+            if not first_elapsed_in_chunk and prev_elapsed > MIN_SESSION_ELAPSED_SEC and elapsed_sec < prev_elapsed * 0.5 and session_bytes_changed:
                 if current_session:
                     current_session["end_time"] = current_session.get("last_ts", "")
                     current_session["final_elapsed_sec"] = prev_elapsed
@@ -674,6 +679,7 @@ def scan_full_log():
                 current_session["last_ts"] = last_ts
             current_session["final_elapsed_sec"] = elapsed_sec
             prev_elapsed = elapsed_sec
+            first_elapsed_in_chunk = False  # FIX 1: only skip the very first elapsed comparison
 
         m_copied = RE_COPIED.search(line)
         if m_copied:
@@ -693,6 +699,51 @@ def scan_full_log():
         cs_copy = dict(current_session)
         cs_copy["end_time"] = cs_copy.get("last_ts", "")
         finalized_sessions.append(cs_copy)
+
+    # FIX 4: Deduplicate sessions with nearly identical start times (within
+    # 60 seconds). These are false boundaries from incremental scanning.
+    if len(finalized_sessions) > 1:
+        deduped = [finalized_sessions[0]]
+        for s in finalized_sessions[1:]:
+            prev_start = deduped[-1].get("start_time", "")
+            cur_start = s.get("start_time", "")
+            if prev_start and cur_start:
+                try:
+                    t_prev = datetime.strptime(prev_start, "%Y/%m/%d %H:%M:%S")
+                    t_cur = datetime.strptime(cur_start, "%Y/%m/%d %H:%M:%S")
+                    if abs((t_cur - t_prev).total_seconds()) < 60:
+                        # Merge: keep the one with more transferred bytes
+                        if s.get("final_transferred_bytes", 0) > deduped[-1].get("final_transferred_bytes", 0):
+                            s["start_time"] = deduped[-1].get("start_time", s.get("start_time", ""))
+                            s["session_num"] = deduped[-1].get("session_num", s.get("session_num", 0))
+                            deduped[-1] = s
+                        else:
+                            deduped[-1]["end_time"] = s.get("end_time", deduped[-1].get("end_time", ""))
+                            deduped[-1]["final_elapsed_sec"] = max(
+                                deduped[-1].get("final_elapsed_sec", 0),
+                                s.get("final_elapsed_sec", 0),
+                            )
+                            deduped[-1]["final_transferred_bytes"] = max(
+                                deduped[-1].get("final_transferred_bytes", 0),
+                                s.get("final_transferred_bytes", 0),
+                            )
+                            deduped[-1]["final_files_done"] = max(
+                                deduped[-1].get("final_files_done", 0),
+                                s.get("final_files_done", 0),
+                            )
+                        continue
+                except Exception:
+                    pass
+            deduped.append(s)
+        # Renumber sessions after dedup
+        for i, s in enumerate(deduped):
+            s["session_num"] = i + 1
+        finalized_sessions = deduped
+        # Also update the internal sessions list (without the current_session at end)
+        if current_session:
+            sessions = finalized_sessions[:-1]
+        else:
+            sessions = finalized_sessions
 
     cumulative_bytes = 0
     cumulative_files = 0
@@ -737,6 +788,24 @@ def scan_full_log():
                 finally:
                     scan_full_log._size_fetching = False
             threading.Thread(target=_fetch_source_size, daemon=True).start()
+
+    # FIX 2: Sanity checks - cumulative values should not exceed source totals.
+    if original_files > 0 and cumulative_files > original_files:
+        cumulative_files = original_files
+    if original_total > 0 and cumulative_bytes > original_total:
+        cumulative_bytes = original_total
+
+    # FIX 3: Active time should not exceed wall clock time.
+    if finalized_sessions:
+        try:
+            first_start_str = finalized_sessions[0].get("start_time", "")
+            if first_start_str:
+                first_start_dt = datetime.strptime(first_start_str, "%Y/%m/%d %H:%M:%S")
+                wall_clock_sec = (datetime.now() - first_start_dt).total_seconds()
+                if wall_clock_sec > 0 and cumulative_elapsed > wall_clock_sec:
+                    cumulative_elapsed = wall_clock_sec
+        except Exception:
+            pass
 
     with state_lock:
         state["sessions"] = [
@@ -975,8 +1044,24 @@ def parse_current():
         else:
             global_files_total = result.get("session_files_total", 0) + cumul_files
 
+        # FIX 2 (parse_current): Cap files/bytes so they never exceed totals
+        if global_files_total > 0 and global_files_done > global_files_total:
+            global_files_done = global_files_total
+        if global_total > 0 and global_transferred > global_total:
+            global_transferred = global_total
+
         session_elapsed_sec = parse_elapsed(result.get("session_elapsed", ""))
         global_elapsed_sec = cumul_elapsed + session_elapsed_sec
+
+        # FIX 3 (parse_current): Cap active time at wall clock time
+        if sessions:
+            try:
+                first_start_pc = datetime.strptime(sessions[0]["start"], "%Y/%m/%d %H:%M:%S")
+                wall_sec_pc = (datetime.now() - first_start_pc).total_seconds()
+                if wall_sec_pc > 0 and global_elapsed_sec > wall_sec_pc:
+                    global_elapsed_sec = wall_sec_pc
+            except Exception:
+                pass
 
         global_pct = 0
         if global_total > 0:
@@ -1126,11 +1211,11 @@ HTML = r"""<!DOCTYPE html>
 }
 
 [data-theme="dark"] {
-  --bg: #0b0d13;
+  --bg: #0c0c0f;
   --bg-surface: #12141c;
-  --card: #181a24;
+  --card: #16161a;
   --card-hover: #1e2030;
-  --card-border: rgba(255,255,255,0.05);
+  --card-border: rgba(255,255,255,0.06);
   --text: #f0f0f5;
   --text-dim: #8b8fa3;
   --text-muted: #5a5e73;
@@ -1362,19 +1447,14 @@ body::before {
 }
 .stat-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 22px; font-weight: 600; color: var(--text);
+  font-size: 22px; font-weight: 600; color: #fff;
   line-height: 1.2; letter-spacing: -0.02em;
 }
 .stat-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-/* Reduce stat card colors to indigo + cyan */
-.stat-value.blue { color: var(--primary); }
-.stat-value.green { color: var(--primary); }
-.stat-value.orange { color: var(--secondary); }
-.stat-value.purple { color: var(--primary); }
-.stat-value.cyan { color: var(--secondary); }
+/* Stat card color classes: indigo + cyan only */
+.stat-value.green, .stat-value.blue, .stat-value.purple, .stat-value.cyan { color: var(--primary); }
+.stat-value.orange, .stat-value.yellow, .stat-value.pink { color: var(--secondary); }
 .stat-value.red { color: var(--red); }
-.stat-value.pink { color: var(--primary); }
-.stat-value.yellow { color: var(--secondary); }
 
 /* ========== SESSION TIMELINE ========== */
 .timeline-section {
