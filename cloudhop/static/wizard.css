@@ -121,7 +121,7 @@
   .advanced-toggle .arrow { transition: transform 0.3s; font-size: 0.6rem; }
   .advanced-toggle .arrow.open { transform: rotate(90deg); }
   .advanced-content { max-height: 0; overflow: hidden; transition: max-height 0.4s ease; }
-  .advanced-content.open { max-height: 500px; }
+  .advanced-content.open { max-height: 1200px; }
 
   .provider-card {
     background: var(--card); border: 2px solid var(--card-border);

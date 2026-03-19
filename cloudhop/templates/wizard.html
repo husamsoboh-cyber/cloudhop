@@ -60,11 +60,11 @@
     <div class="wizard-subtitle">Select the cloud storage where your files currently live.</div>
     <div class="providers-grid" id="sourceGrid">
       <div class="provider-card" data-provider="drive" data-name="Google Drive" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
-        <div class="provider-icon"><svg width="48" height="44" viewBox="0 0 87.3 78"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.9-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 87.3 78"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.9-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg></div>
         <div class="provider-name">Google Drive</div>
       </div>
       <div class="provider-card" data-provider="onedrive" data-name="OneDrive" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
-        <div class="provider-icon"><svg width="48" height="32" viewBox="0 0 24 16"><defs><linearGradient id="odg1" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#0364b8"/><stop offset="1" stop-color="#28a8ea"/></linearGradient></defs><path d="M19.5 7c-.2 0-.4 0-.6.1C18.1 3.6 15.3 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.2 5.2 5 5.2 3.3 5.2 2 6.5 2 8.2c0 .2 0 .4.1.6C.8 9.4 0 10.8 0 12.5 0 15 2 17 4.5 17H19c2.8 0 5-2.2 5-5s-2.2-5-5-5z" fill="url(#odg1)"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 16"><defs><linearGradient id="odg1" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#0364b8"/><stop offset="1" stop-color="#28a8ea"/></linearGradient></defs><path d="M19.5 7c-.2 0-.4 0-.6.1C18.1 3.6 15.3 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.2 5.2 5 5.2 3.3 5.2 2 6.5 2 8.2c0 .2 0 .4.1.6C.8 9.4 0 10.8 0 12.5 0 15 2 17 4.5 17H19c2.8 0 5-2.2 5-5s-2.2-5-5-5z" fill="url(#odg1)"/></svg></div>
         <div class="provider-name">OneDrive</div>
       </div>
       <div class="provider-card" data-provider="dropbox" data-name="Dropbox" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
@@ -80,7 +80,7 @@
         <div class="provider-name">Amazon S3</div>
       </div>
       <div class="provider-card" data-provider="protondrive" data-name="Proton Drive" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
-        <div class="provider-icon"><svg width="40" height="36" viewBox="0 0 24 22"><defs><linearGradient id="pdg1" x1="0" y1="0" x2="24" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#d4b4f7"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><path d="M20 6H4C2.9 6 2 6.9 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" fill="url(#pdg1)"/><path d="M22 5H10L8 2H4c-1.1 0-2 .9-2 2v1h16c1.1 0 2 .9 2 2V5z" fill="url(#pdg1)" opacity=".6"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 22"><defs><linearGradient id="pdg1" x1="0" y1="0" x2="24" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#d4b4f7"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><path d="M20 6H4C2.9 6 2 6.9 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" fill="url(#pdg1)"/><path d="M22 5H10L8 2H4c-1.1 0-2 .9-2 2v1h16c1.1 0 2 .9 2 2V5z" fill="url(#pdg1)" opacity=".6"/></svg></div>
         <div class="provider-name">Proton Drive</div>
       </div>
       <div class="provider-card" data-provider="local" data-name="Local Folder" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
@@ -88,7 +88,7 @@
         <div class="provider-name">Local Folder</div>
       </div>
       <div class="provider-card" data-provider="icloud" data-name="iCloud Drive" tabindex="0" role="button" onclick="selectSource(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSource(this)}">
-        <div class="provider-icon"><svg width="48" height="32" viewBox="0 0 24 16"><defs><linearGradient id="icg1" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#a8d8f0"/><stop offset="1" stop-color="#5ab0e4"/></linearGradient></defs><path d="M19 7c-.2 0-.3 0-.5.1C17.7 3.5 15 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.3 5.3 5 5.3 3.3 5.3 2 6.6 2 8.3c0 .2 0 .4.1.5C.8 9.5 0 10.9 0 12.5 0 14.9 2 17 4.5 17h14c2.8 0 5-2.2 5-5s-2.2-5-4.5-5z" fill="url(#icg1)"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 16"><defs><linearGradient id="icg1" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#a8d8f0"/><stop offset="1" stop-color="#5ab0e4"/></linearGradient></defs><path d="M19 7c-.2 0-.3 0-.5.1C17.7 3.5 15 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.3 5.3 5 5.3 3.3 5.3 2 6.6 2 8.3c0 .2 0 .4.1.5C.8 9.5 0 10.9 0 12.5 0 14.9 2 17 4.5 17h14c2.8 0 5-2.2 5-5s-2.2-5-4.5-5z" fill="url(#icg1)"/></svg></div>
         <div class="provider-name">iCloud Drive</div>
         <div style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;">macOS only - accesses your iCloud Drive folder</div>
       </div>
@@ -129,11 +129,11 @@
     <div class="wizard-subtitle">Select the destination cloud storage.</div>
     <div class="providers-grid" id="destGrid">
       <div class="provider-card" data-provider="drive" data-name="Google Drive" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
-        <div class="provider-icon"><svg width="48" height="44" viewBox="0 0 87.3 78"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.9-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 87.3 78"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44c-.8 1.4-1.2 2.9-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg></div>
         <div class="provider-name">Google Drive</div>
       </div>
       <div class="provider-card" data-provider="onedrive" data-name="OneDrive" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
-        <div class="provider-icon"><svg width="48" height="32" viewBox="0 0 24 16"><defs><linearGradient id="odg2" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#0364b8"/><stop offset="1" stop-color="#28a8ea"/></linearGradient></defs><path d="M19.5 7c-.2 0-.4 0-.6.1C18.1 3.6 15.3 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.2 5.2 5 5.2 3.3 5.2 2 6.5 2 8.2c0 .2 0 .4.1.6C.8 9.4 0 10.8 0 12.5 0 15 2 17 4.5 17H19c2.8 0 5-2.2 5-5s-2.2-5-5-5z" fill="url(#odg2)"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 16"><defs><linearGradient id="odg2" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#0364b8"/><stop offset="1" stop-color="#28a8ea"/></linearGradient></defs><path d="M19.5 7c-.2 0-.4 0-.6.1C18.1 3.6 15.3 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.2 5.2 5 5.2 3.3 5.2 2 6.5 2 8.2c0 .2 0 .4.1.6C.8 9.4 0 10.8 0 12.5 0 15 2 17 4.5 17H19c2.8 0 5-2.2 5-5s-2.2-5-5-5z" fill="url(#odg2)"/></svg></div>
         <div class="provider-name">OneDrive</div>
       </div>
       <div class="provider-card" data-provider="dropbox" data-name="Dropbox" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
@@ -149,7 +149,7 @@
         <div class="provider-name">Amazon S3</div>
       </div>
       <div class="provider-card" data-provider="protondrive" data-name="Proton Drive" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
-        <div class="provider-icon"><svg width="40" height="36" viewBox="0 0 24 22"><defs><linearGradient id="pdg2" x1="0" y1="0" x2="24" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#d4b4f7"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><path d="M20 6H4C2.9 6 2 6.9 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" fill="url(#pdg2)"/><path d="M22 5H10L8 2H4c-1.1 0-2 .9-2 2v1h16c1.1 0 2 .9 2 2V5z" fill="url(#pdg2)" opacity=".6"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 22"><defs><linearGradient id="pdg2" x1="0" y1="0" x2="24" y2="22" gradientUnits="userSpaceOnUse"><stop stop-color="#d4b4f7"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><path d="M20 6H4C2.9 6 2 6.9 2 8v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z" fill="url(#pdg2)"/><path d="M22 5H10L8 2H4c-1.1 0-2 .9-2 2v1h16c1.1 0 2 .9 2 2V5z" fill="url(#pdg2)" opacity=".6"/></svg></div>
         <div class="provider-name">Proton Drive</div>
       </div>
       <div class="provider-card" data-provider="local" data-name="Local Folder" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
@@ -157,7 +157,7 @@
         <div class="provider-name">Local Folder</div>
       </div>
       <div class="provider-card" data-provider="icloud" data-name="iCloud Drive" tabindex="0" role="button" onclick="selectDest(this)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDest(this)}">
-        <div class="provider-icon"><svg width="48" height="32" viewBox="0 0 24 16"><defs><linearGradient id="icg2" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#a8d8f0"/><stop offset="1" stop-color="#5ab0e4"/></linearGradient></defs><path d="M19 7c-.2 0-.3 0-.5.1C17.7 3.5 15 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.3 5.3 5 5.3 3.3 5.3 2 6.6 2 8.3c0 .2 0 .4.1.5C.8 9.5 0 10.9 0 12.5 0 14.9 2 17 4.5 17h14c2.8 0 5-2.2 5-5s-2.2-5-4.5-5z" fill="url(#icg2)"/></svg></div>
+        <div class="provider-icon"><svg width="40" height="40" viewBox="0 0 24 16"><defs><linearGradient id="icg2" x1="0" y1="0" x2="24" y2="16" gradientUnits="userSpaceOnUse"><stop stop-color="#a8d8f0"/><stop offset="1" stop-color="#5ab0e4"/></linearGradient></defs><path d="M19 7c-.2 0-.3 0-.5.1C17.7 3.5 15 1 12 1 9.2 1 6.8 2.8 5.7 5.4 5.5 5.3 5.3 5.3 5 5.3 3.3 5.3 2 6.6 2 8.3c0 .2 0 .4.1.5C.8 9.5 0 10.9 0 12.5 0 14.9 2 17 4.5 17h14c2.8 0 5-2.2 5-5s-2.2-5-4.5-5z" fill="url(#icg2)"/></svg></div>
         <div class="provider-name">iCloud Drive</div>
         <div style="font-size:0.65rem;color:var(--text-dim);margin-top:4px;">macOS only - accesses your iCloud Drive folder</div>
       </div>
@@ -250,36 +250,37 @@
           </div>
         </label>
       </div>
-      <div class="option-group" style="margin-top:24px;padding-top:24px;border-top:1px solid var(--border);">
-        <h4 style="margin-bottom:12px;font-weight:600;color:var(--text);">Schedule (optional)</h4>
-        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:16px;">
+      <div class="form-group" style="margin-top:20px;padding-top:20px;border-top:1px solid var(--card-border);">
+        <label class="form-label">Schedule (optional)</label>
+        <p class="form-hint">Only transfer during specific hours to avoid peak usage or bandwidth limits.</p>
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin:12px 0 16px;">
           <input type="checkbox" id="scheduleEnabled" style="width:18px;height:18px;accent-color:var(--primary);">
-          <span style="color:var(--text);">Only transfer during specific hours</span>
+          <span style="color:var(--text);font-size:0.95rem;">Enable scheduled transfers</span>
         </label>
         <div id="scheduleConfig" style="display:none;padding-left:28px;">
-          <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px;">
-            <label style="color:var(--text-dim);font-size:14px;">
-              From <input type="time" id="scheduleStart" value="22:00"
-                style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:4px;">
+          <div style="display:flex;gap:16px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+            <label style="color:var(--text-dim);font-size:0.9rem;">
+              From
+              <input type="time" id="scheduleStart" value="22:00" class="form-input" style="width:auto;padding:8px 12px;margin-left:6px;">
             </label>
-            <label style="color:var(--text-dim);font-size:14px;">
-              To <input type="time" id="scheduleEnd" value="06:00"
-                style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:4px;">
+            <label style="color:var(--text-dim);font-size:0.9rem;">
+              To
+              <input type="time" id="scheduleEnd" value="06:00" class="form-input" style="width:auto;padding:8px 12px;margin-left:6px;">
             </label>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="0" checked> Mon</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="1" checked> Tue</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="2" checked> Wed</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="3" checked> Thu</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="4" checked> Fri</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="5" checked> Sat</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text-dim);"><input type="checkbox" data-day="6" checked> Sun</label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="0" checked style="accent-color:var(--primary);"> Mon</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="1" checked style="accent-color:var(--primary);"> Tue</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="2" checked style="accent-color:var(--primary);"> Wed</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="3" checked style="accent-color:var(--primary);"> Thu</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="4" checked style="accent-color:var(--primary);"> Fri</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="5" checked style="accent-color:var(--primary);"> Sat</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.85rem;color:var(--text-dim);cursor:pointer;"><input type="checkbox" data-day="6" checked style="accent-color:var(--primary);"> Sun</label>
           </div>
           <div style="margin-bottom:8px;">
-            <label style="color:var(--text-dim);font-size:14px;">
+            <label style="color:var(--text-dim);font-size:0.9rem;">
               Speed limit during window
-              <select id="bwLimitInWindow" style="background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-left:8px;">
+              <select id="bwLimitInWindow" class="form-input" style="width:auto;padding:8px 12px;margin-left:8px;">
                 <option value="">Unlimited</option>
                 <option value="1M">1 MB/s</option>
                 <option value="2M">2 MB/s</option>

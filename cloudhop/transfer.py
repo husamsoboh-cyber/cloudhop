@@ -211,7 +211,6 @@ class TransferManager:
 
         # Internal flag used by scan_full_log to avoid concurrent size fetches
         self._size_fetching: bool = False
-        self._notified_complete: bool = False
 
     # ---- path helpers --------------------------------------------------------
 
@@ -238,11 +237,8 @@ class TransferManager:
         now = datetime.now()
         current_day = now.weekday()  # 0=Monday
         allowed_days = schedule.get("days", [0, 1, 2, 3, 4, 5, 6])
-
-        if current_day not in allowed_days:
-            return False
-
         current_minutes = now.hour * 60 + now.minute
+
         start_h, start_m = map(int, schedule.get("start_time", "22:00").split(":"))
         end_h, end_m = map(int, schedule.get("end_time", "06:00").split(":"))
         start_minutes = start_h * 60 + start_m
@@ -250,10 +246,20 @@ class TransferManager:
 
         if start_minutes <= end_minutes:
             # Same-day window (e.g., 09:00 - 17:00)
+            if current_day not in allowed_days:
+                return False
             return start_minutes <= current_minutes < end_minutes
         else:
             # Overnight window (e.g., 22:00 - 06:00)
-            return current_minutes >= start_minutes or current_minutes < end_minutes
+            if current_minutes >= start_minutes:
+                # Evening side - check today's day
+                return current_day in allowed_days
+            elif current_minutes < end_minutes:
+                # Early morning - window started yesterday
+                yesterday = (current_day - 1) % 7
+                return yesterday in allowed_days
+            else:
+                return False
 
     def _check_schedule(self) -> None:
         """Auto-pause/resume based on schedule window. Called by background_scanner."""
@@ -347,8 +353,8 @@ class TransferManager:
                 with open(tmp, "w") as f:
                     json.dump(self.state, f)
                 os.replace(tmp, self.state_file)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to save state: %s", e)
 
     # ---- rclone process management -------------------------------------------
 

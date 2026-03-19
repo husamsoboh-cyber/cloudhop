@@ -285,6 +285,8 @@ function showCompletionScreen(d) {
     const overlay = document.createElement('div');
     overlay.id = 'completionOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9998;backdrop-filter:blur(8px);';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
     const totalFiles = d.global_files_done ? d.global_files_done.toLocaleString() : '0';
     const totalSize = d.global_transferred || '--';
     const totalTime = d.global_elapsed || '--';
@@ -314,8 +316,8 @@ function showCompletionScreen(d) {
             <div style="border-top:1px solid var(--border);padding-top:20px;">
                 <p style="color:var(--text-tertiary);font-size:0.8rem;margin-bottom:12px;">CloudHop is free and open source. If it saved you time, consider supporting development:</p>
                 <div style="display:flex;gap:10px;justify-content:center;">
-                    <a href="https://buymeacoffee.com/husamsoboh" target="_blank" style="padding:8px 16px;border-radius:8px;background:#ffdd00;color:#000;text-decoration:none;font-weight:600;font-size:0.8rem;">Buy Me a Coffee</a>
-                    <a href="https://github.com/sponsors/husamsoboh-cyber" target="_blank" style="padding:8px 16px;border-radius:8px;background:rgba(234,74,170,0.15);color:#ea4aaa;border:1px solid rgba(234,74,170,0.3);text-decoration:none;font-weight:600;font-size:0.8rem;">GitHub Sponsor</a>
+                    <a href="https://buymeacoffee.com/husamsoboh" target="_blank" rel="noopener noreferrer" style="padding:8px 16px;border-radius:8px;background:#ffdd00;color:#000;text-decoration:none;font-weight:600;font-size:0.8rem;">Buy Me a Coffee</a>
+                    <a href="https://github.com/sponsors/husamsoboh-cyber" target="_blank" rel="noopener noreferrer" style="padding:8px 16px;border-radius:8px;background:rgba(234,74,170,0.15);color:#ea4aaa;border:1px solid rgba(234,74,170,0.3);text-decoration:none;font-weight:600;font-size:0.8rem;">GitHub Sponsor</a>
                 </div>
             </div>
         </div>

@@ -551,6 +551,27 @@ function buildSummary() {
     </div>` : ''}
     ${useChecksum ? `<div class="summary-row"><span class="summary-label">Checksum verification</span><span class="summary-value">Enabled</span></div>` : ''}
   `;
+
+  // Add schedule info if enabled
+  const schedEl = document.getElementById('scheduleEnabled');
+  if (schedEl && schedEl.checked) {
+    const start = document.getElementById('scheduleStart').value;
+    const end = document.getElementById('scheduleEnd').value;
+    const days = [];
+    document.querySelectorAll('#scheduleConfig [data-day]').forEach(cb => {
+      if (cb.checked) {
+        days.push(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][parseInt(cb.dataset.day)]);
+      }
+    });
+    const bwInWindow = document.getElementById('bwLimitInWindow').value;
+    let schedDesc = start + ' - ' + end + ' on ' + days.join(', ');
+    if (bwInWindow) schedDesc += ' (limit: ' + bwInWindow.replace('M', ' MB/s') + ')';
+    card.innerHTML += `
+      <div class="summary-row">
+        <span class="summary-label">Schedule</span>
+        <span class="summary-value">${esc(schedDesc)}</span>
+      </div>`;
+  }
 }
 
 function showWizardError(msg) {
@@ -663,7 +684,7 @@ async function startTransfer() {
         document.querySelectorAll('#scheduleConfig [data-day]').forEach(cb => {
           if (cb.checked) days.push(parseInt(cb.dataset.day));
         });
-        fetch('/api/schedule', {
+        await fetch('/api/schedule', {
           method: 'POST',
           headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
           body: JSON.stringify({

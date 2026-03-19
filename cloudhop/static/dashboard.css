@@ -240,6 +240,19 @@ body::before {
   font-size: 12px;
   color: var(--text-tertiary);
 }
+.schedule-badge {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: var(--mono);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
 
 /* ========== BIG PROGRESS ========== */
 .progress-section {
@@ -369,6 +382,24 @@ body::before {
   margin-right: 4px; vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.ctrl-select {
+  padding: 7px 12px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--body);
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.ctrl-select:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
 
 /* ========== STATS GRID ========== */
 .stats-grid {
