@@ -335,7 +335,7 @@ async function buildConnectStep() {
       <div id="action-${item.name}">
         ${connected
           ? '<div class="checkmark">✓</div>'
-          : `<button class="btn btn-primary btn-connect" onclick="connectRemote('${item.name}','${item.provider}','${item.display}')">Connect ${item.display}</button>`
+          : `<button class="btn btn-primary btn-connect" onclick="connectRemote('${item.name.replace(/'/g, "\\'")}','${item.provider.replace(/'/g, "\\'")}','${item.display.replace(/'/g, "\\'")}')">Connect ${esc(item.display)}</button>`
         }
       </div>
     `;
@@ -345,6 +345,9 @@ async function buildConnectStep() {
 }
 
 async function connectRemote(name, type, display, username, password) {
+  const safeName = name.replace(/'/g, "\\'");
+  const safeType = type.replace(/'/g, "\\'");
+  const safeDisplay = display.replace(/'/g, "\\'");
   const actionEl = document.getElementById('action-' + name);
   const statusEl = document.getElementById('status-' + name);
   actionEl.innerHTML = '<div class="spinner"></div>';
@@ -378,14 +381,14 @@ async function connectRemote(name, type, display, username, password) {
       const passLabel = data.pass_label || 'Password';
       actionEl.innerHTML = `
         <div style="display:flex;flex-direction:column;gap:8px;min-width:220px;">
-          <input class="form-input" id="cred-user-${name}" type="text" placeholder="${userLabel}" style="padding:8px 12px;font-size:0.8rem;">
-          <input class="form-input" id="cred-pass-${name}" type="password" placeholder="${passLabel}" style="padding:8px 12px;font-size:0.8rem;">
-          <button class="btn btn-primary btn-connect" onclick="connectRemote('${name}','${type}','${display}', document.getElementById('cred-user-${name}').value, document.getElementById('cred-pass-${name}').value)">Connect</button>
+          <input class="form-input" id="cred-user-${safeName}" type="text" placeholder="${userLabel}" style="padding:8px 12px;font-size:0.8rem;">
+          <input class="form-input" id="cred-pass-${safeName}" type="password" placeholder="${passLabel}" style="padding:8px 12px;font-size:0.8rem;">
+          <button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}', document.getElementById('cred-user-${safeName}').value, document.getElementById('cred-pass-${safeName}').value)">Connect</button>
         </div>`;
     } else {
       statusEl.textContent = data.msg || 'Failed to connect';
       statusEl.className = 'connect-status pending';
-      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${name}','${type}','${display}')">Retry</button>`;
+      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}')">Retry</button>`;
     }
   } catch(e) {
     if (['drive','onedrive','dropbox'].includes(type)) {
@@ -394,7 +397,7 @@ async function connectRemote(name, type, display, username, password) {
     } else {
       statusEl.textContent = 'Failed to connect';
       statusEl.className = 'connect-status pending';
-      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${name}','${type}','${display}')">Retry</button>`;
+      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}')">Retry</button>`;
     }
   }
   checkAllConnected();

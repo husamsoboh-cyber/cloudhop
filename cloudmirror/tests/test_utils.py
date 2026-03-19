@@ -473,10 +473,8 @@ class TestGetRemoteLabel:
         assert get_remote_label("ftp:server") == "FTP/server"
 
     def test_sftp(self):
-        # NOTE: known issue - "sftp" contains "ftp" and dict iteration order
-        # means FTP may match before SFTP. The original code has this behavior.
         result = get_remote_label("sftp:server")
-        assert result in ("SFTP/server", "FTP/server")
+        assert result == "SFTP/server"
 
     def test_protondrive(self):
         assert get_remote_label("protondrive:") == "Proton Drive"
@@ -504,3 +502,38 @@ class TestGetRemoteLabel:
 
     def test_gdrive_deep_subfolder(self):
         assert get_remote_label("gdrive:a/b/c") == "Google Drive/a/b/c"
+
+    def test_sftp_exact_match(self):
+        """SFTP should not be misidentified as FTP."""
+        assert get_remote_label("sftp:server") == "SFTP/server"
+
+    def test_sftp_no_subfolder(self):
+        assert get_remote_label("sftp:") == "SFTP"
+
+    def test_bare_colon(self):
+        """A bare colon with no remote name should return 'Local'."""
+        assert get_remote_label(":") == "Local"
+
+
+# ─── downsample edge cases ──────────────────────────────────────────────────
+
+
+class TestDownsampleEdgeCases:
+    def test_target_zero_returns_original(self):
+        """target=0 should not crash with ZeroDivisionError."""
+        arr = [1, 2, 3]
+        assert downsample(arr, target=0) == arr
+
+    def test_target_negative_returns_original(self):
+        arr = [1, 2, 3]
+        assert downsample(arr, target=-1) == arr
+
+
+# ─── fmt_bytes edge cases ───────────────────────────────────────────────────
+
+
+class TestFmtBytesEdgeCases:
+    def test_negative_bytes(self):
+        """Negative byte values should not crash."""
+        result = fmt_bytes(-1)
+        assert "B" in result

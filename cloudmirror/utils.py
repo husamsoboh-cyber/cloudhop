@@ -1,10 +1,7 @@
 """CloudMirror utilities - pure functions and constants."""
 
-import json
 import os
 import re
-import shutil
-import subprocess
 from typing import List, Optional
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -197,7 +194,7 @@ def fmt_duration(sec: float) -> str:
 
 def downsample(arr: list, target: int = CHART_DOWNSAMPLE_TARGET) -> list:
     """Reduce a list to approximately ``target`` evenly-spaced samples."""
-    if len(arr) <= target:
+    if target <= 0 or len(arr) <= target:
         return arr
     step = len(arr) / target
     out: List = []
@@ -226,6 +223,13 @@ def get_remote_label(path: str) -> str:
         "local": "Local",
     }
     name = path.split(":")[0].lower().strip()
+    # First try exact match, then substring match (avoids "ftp" matching "sftp")
+    for key, label in labels.items():
+        if key == name:
+            subfolder = path.split(":", 1)[1] if ":" in path else ""
+            if subfolder:
+                return f"{label}/{subfolder}"
+            return label
     for key, label in labels.items():
         if key in name:
             # Add subfolder if present
@@ -235,7 +239,8 @@ def get_remote_label(path: str) -> str:
             return label
     if ":" not in path or path.startswith("/") or path.startswith("./"):
         return "Local"
-    return path.split(":")[0]
+    remote_name = path.split(":")[0]
+    return remote_name if remote_name else "Local"
 
 
 # ─── Cloud provider definitions ──────────────────────────────────────────────
@@ -250,126 +255,3 @@ PROVIDERS = {
     "7": {"name": "Local folder", "type": "local", "key": "local"},
     "8": {"name": "Other (advanced)", "type": None, "key": None},
 }
-
-
-# ─── Rclone helpers ──────────────────────────────────────────────────────────
-
-
-def find_rclone() -> Optional[str]:
-    """Check if rclone is installed and return its path."""
-    return shutil.which("rclone")
-
-
-def get_existing_remotes() -> List[str]:
-    """Get list of configured rclone remotes."""
-    try:
-        result = subprocess.run(
-            ["rclone", "listremotes"], capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            remotes = [r.strip().rstrip(":") for r in result.stdout.strip().split("\n") if r.strip()]
-            return remotes
-    except Exception:
-        pass
-    return []
-
-
-def remote_exists(name: str) -> bool:
-    """Check if a remote is already configured."""
-    return name in get_existing_remotes()
-
-
-def configure_remote_api(name: str, provider_type: str,
-                         username: Optional[str] = None,
-                         password: Optional[str] = None) -> dict:
-    """Configure an rclone remote non-interactively (for web wizard)."""
-    if provider_type == "local":
-        return {"ok": True}
-
-    if remote_exists(name):
-        return {"ok": True, "msg": "Already configured"}
-
-    if username and not validate_rclone_input(username, "username"):
-        return {"ok": False, "msg": "Invalid username"}
-    if password and not validate_rclone_input(password, "password"):
-        return {"ok": False, "msg": "Invalid password"}
-
-    env = None
-
-    if provider_type == "mega":
-        if not username or not password:
-            return {"ok": False, "needs_credentials": True,
-                    "msg": "MEGA requires your email and password.",
-                    "user_label": "Email", "pass_label": "Password"}
-        result = subprocess.run(["rclone", "obscure", password], capture_output=True, text=True)
-        if result.returncode != 0:
-            return {"ok": False, "msg": "Failed to process credentials"}
-        obscured = result.stdout.strip()
-        env = os.environ.copy()
-        env[f"RCLONE_CONFIG_{name.upper()}_USER"] = username
-        env[f"RCLONE_CONFIG_{name.upper()}_PASS"] = obscured
-        cmd = ["rclone", "config", "create", name, provider_type]
-    elif provider_type == "protondrive":
-        if not username or not password:
-            return {"ok": False, "needs_credentials": True,
-                    "msg": "Proton Drive requires your Proton username and password.",
-                    "user_label": "Username", "pass_label": "Password"}
-        result = subprocess.run(["rclone", "obscure", password], capture_output=True, text=True)
-        if result.returncode != 0:
-            return {"ok": False, "msg": "Failed to process credentials"}
-        obscured_pw = result.stdout.strip()
-        env = os.environ.copy()
-        env[f"RCLONE_CONFIG_{name.upper()}_USERNAME"] = username
-        env[f"RCLONE_CONFIG_{name.upper()}_PASSWORD"] = obscured_pw
-        cmd = ["rclone", "config", "create", name, provider_type]
-    elif provider_type == "s3":
-        if not username or not password:
-            return {"ok": False, "needs_credentials": True,
-                    "msg": "Amazon S3 requires your Access Key ID and Secret Access Key.",
-                    "user_label": "Access Key ID", "pass_label": "Secret Access Key"}
-        env = os.environ.copy()
-        env[f"RCLONE_CONFIG_{name.upper()}_ACCESS_KEY_ID"] = username
-        env[f"RCLONE_CONFIG_{name.upper()}_SECRET_ACCESS_KEY"] = password
-        cmd = ["rclone", "config", "create", name, provider_type, "provider=AWS"]
-    else:
-        # For OAuth-based providers, rclone config create will open browser automatically
-        cmd = ["rclone", "config", "create", name, provider_type]
-
-    try:
-        run_env = env if provider_type in ("s3", "mega", "protondrive") else None
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=RCLONE_CONFIG_TIMEOUT_SEC, env=run_env,
-        )
-        if result.returncode == 0:
-            # Validate the remote actually works
-            if provider_type in ("mega", "protondrive", "s3"):
-                check = subprocess.run(
-                    ["rclone", "lsd", f"{name}:"],
-                    capture_output=True, text=True,
-                    timeout=RCLONE_CHECK_TIMEOUT_SEC,
-                )
-                if check.returncode != 0:
-                    # Remove the broken remote
-                    subprocess.run(
-                        ["rclone", "config", "delete", name],
-                        capture_output=True, text=True,
-                    )
-                    error_msg = (
-                        check.stderr.strip().split("\n")[0]
-                        if check.stderr
-                        else "Invalid credentials"
-                    )
-                    if any(
-                        kw in error_msg.lower()
-                        for kw in ("login", "auth", "credential", "password")
-                    ):
-                        error_msg = "Invalid username or password. Please check your credentials and try again."
-                    return {"ok": False, "msg": error_msg}
-            return {"ok": True}
-        else:
-            return {"ok": False, "msg": _sanitize_rclone_error(result.stderr)}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "msg": "Configuration timed out. Please try again."}
-    except Exception as e:
-        return {"ok": False, "msg": _sanitize_rclone_error(str(e))}

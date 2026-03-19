@@ -9,7 +9,12 @@ import shutil
 import subprocess
 from typing import Any, Dict, Optional
 
-from .transfer import TransferManager
+from .transfer import (
+    TransferManager,
+    find_rclone,
+    get_existing_remotes,
+    remote_exists,
+)
 from .templates import render
 from .utils import (
     PORT,
@@ -17,11 +22,6 @@ from .utils import (
     RCLONE_INSTALL_TIMEOUT_SEC,
     RCLONE_PREVIEW_TIMEOUT_SEC,
     validate_rclone_input,
-    validate_exclude_pattern,
-    find_rclone,
-    get_existing_remotes,
-    remote_exists,
-    configure_remote_api,
     _CM_DIR,
     TRANSFER_LABEL,
 )
@@ -73,7 +73,7 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         ext = filename.rsplit(".", 1)[-1]
-        content_types = {"css": "text/css", "js": "application/javascript"}
+        content_types = {"css": "text/css", "js": "application/javascript", "svg": "image/svg+xml"}
         self.send_response(200)
         self.send_header("Content-Type", content_types.get(ext, "text/plain"))
         self.end_headers()
@@ -104,7 +104,12 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
 
     def _read_body(self) -> Optional[Dict[str, Any]]:
         """Read and parse the JSON request body with a size cap."""
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            return None
+        if length < 0:
+            return None
         if length > MAX_REQUEST_BODY_BYTES:
             return None
         if length > 0:
@@ -215,7 +220,7 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
             elif not validate_rclone_input(name, "name") or not validate_rclone_input(rtype, "type"):
                 self._send_json({"ok": False, "msg": "Invalid input"})
             else:
-                result = configure_remote_api(name, rtype, username=username, password=password)
+                result = self.manager.configure_remote(name, rtype, username=username, password=password)
                 self._send_json(result)
         elif self.path == "/api/wizard/check-remote":
             body = self._read_body()
@@ -270,6 +275,8 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
     # ── OPTIONS (CORS preflight) ─────────────────────────────────────────
 
     def do_OPTIONS(self) -> None:
+        if not self._check_host():
+            return
         self.send_response(204)
         port = PORT
         origin = self.headers.get("Origin", "")
