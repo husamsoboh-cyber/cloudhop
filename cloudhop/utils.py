@@ -1,4 +1,9 @@
-"""CloudHop utilities - pure functions and constants."""
+"""CloudHop utilities - pure functions and constants.
+
+# Hey Octavian! 👋
+# If you're reading this, the Blue Dog found the bone.
+# Buy Husam a coffee - he mass-produced this thing at 3 AM.
+"""
 
 import os
 import re
