@@ -9,7 +9,6 @@ let failCount = 0;
 let speedHistory = [];
 let progressHistory = [];
 let filesHistory = [];
-let historyLoaded = false;
 
 // Styled confirm modal (replaces native confirm())
 function showConfirmModal(message) {
@@ -36,6 +35,11 @@ let peakSpeedTime = '';
 
 function parseSpeed(str) {
   if (!str) return 0;
+  // Handle plain "B/s" (no K/M/G/T prefix)
+  const mPlain = str.match(/([\d.]+)\s*B\/s/i);
+  if (mPlain && !/[KMGT]i?B\/s/i.test(str)) {
+    return parseFloat(mPlain[1]) / (1024 * 1024); // convert B to MiB
+  }
   const m = str.match(/([\d.]+)\s*([KMGT]i?B)\/s/i);
   if (!m) return 0;
   let val = parseFloat(m[1]);
@@ -121,12 +125,14 @@ function drawAreaChart(svgId, data, color, gradId, formatY, minZero, maxCap) {
   }
 
   const range = rangeMax - rangeMin;
-  const tickSpacing = niceNum(range / 4, true);
+  if (range <= 0) { rangeMax = rangeMin + 1; }
+  const tickSpacing = niceNum(Math.max(range, 0.001) / 4, true);
   const niceMin = Math.floor(rangeMin / tickSpacing) * tickSpacing;
   const niceMax = Math.ceil(rangeMax / tickSpacing) * tickSpacing;
 
   let html = `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+    <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+    <stop offset="60%" stop-color="${color}" stop-opacity="0.12"/>
     <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
   </linearGradient></defs>`;
 
@@ -159,7 +165,7 @@ function drawAreaChart(svgId, data, color, gradId, formatY, minZero, maxCap) {
     });
     const area = [...pts, `${pad.l + (seg[seg.length-1].i / (data.length-1)) * cw},${pad.t+ch}`, `${pad.l + (seg[0].i / (data.length-1)) * cw},${pad.t+ch}`];
     html += `<polygon points="${area.join(' ')}" fill="url(#${gradId})"/>`;
-    html += `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    html += `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
   });
 
   for (let i = 0; i < segments.length - 1; i++) {
@@ -249,7 +255,7 @@ async function refresh() {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
-      ['btnPause','btnResume','btnCancel','btnNewTransfer','sessionBadge','btnPause2','btnResume2','btnCancel2','btnNewTransfer2'].forEach(id => {
+      ['sessionBadge','btnPause2','btnResume2','btnCancel2','btnNewTransfer2'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
@@ -265,7 +271,7 @@ async function refresh() {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
-      ['btnPause','btnResume','btnCancel','btnNewTransfer','sessionBadge'].forEach(id => {
+      ['sessionBadge','btnPause2','btnResume2','btnCancel2','btnNewTransfer2'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
@@ -311,9 +317,9 @@ async function refresh() {
       const el = document.getElementById(id);
       if (el) el.style.display = isEmpty ? 'none' : '';
     });
-    ['btnPause','btnResume','btnCancel','btnNewTransfer','sessionBadge','btnPause2','btnResume2','btnCancel2','btnNewTransfer2'].forEach(id => {
+    ['btnCancel','btnNewTransfer','sessionBadge','btnCancel2','btnNewTransfer2'].forEach(id => {
       const el = document.getElementById(id);
-      if (el && isEmpty) el.style.display = 'none';
+      if (el) el.style.display = isEmpty ? 'none' : '';
     });
     {const cb=document.getElementById('controlBar');if(cb)cb.style.display=isEmpty?'none':'flex';}
     if (isEmpty) return;
@@ -347,9 +353,6 @@ async function refresh() {
     if (d.global_transferred) document.getElementById('bpTransferred').textContent = d.global_transferred;
     if (d.global_total) document.getElementById('bpTotal').textContent = d.global_total;
     // ETA is computed by the smoothed average-speed block below (near end of refresh).
-
-    // Previous sessions bar overlay - disabled (was broken/confusing)
-    document.getElementById('prevBar').style.width = '0%';
 
     // Session note
     const sn = document.getElementById('sessionNote');
@@ -505,9 +508,9 @@ async function refresh() {
     }
 
     // Charts
-    drawAreaChart('speedChart', speedHistory, '#22c55e', 'speedGrad', v => fmtSpeed(v), true);
-    drawAreaChart('progressChart', progressHistory, '#3b82f6', 'progGrad', v => v.toFixed(0) + '%', true, 100);
-    drawAreaChart('filesChart', filesHistory, '#a78bfa', 'filesGrad', v => Math.round(v).toLocaleString(), true);
+    drawAreaChart('speedChart', speedHistory, '#6366f1', 'speedGrad', v => fmtSpeed(v), true);
+    drawAreaChart('progressChart', progressHistory, '#22d3ee', 'progGrad', v => v.toFixed(0) + '%', true, 100);
+    drawAreaChart('filesChart', filesHistory, '#818cf8', 'filesGrad', v => Math.round(v).toLocaleString(), true);
 
     // Active transfers
     const list = document.getElementById('transfersList');
@@ -565,14 +568,20 @@ async function refresh() {
     if (Object.keys(ftData).length > 0) {
       const sorted = Object.entries(ftData).sort((a,b) => b[1]-a[1]);
       const maxC = sorted[0][1];
+      // Gradient palette matching prototype: deep blue/indigo → cyan/teal
+      const gradientColors = [
+        ['#6366f1','#22d3ee'], ['#818cf8','#22d3ee'], ['#7c3aed','#06b6d4'],
+        ['#6366f1','#14b8a6'], ['#4f46e5','#22d3ee'], ['#8b5cf6','#06b6d4'],
+        ['#6366f1','#2dd4bf'], ['#7c3aed','#22d3ee']
+      ];
       document.getElementById('fileTypes').innerHTML = '<div class="types-grid">' +
-        sorted.slice(0, 24).map(([ext, count]) => {
-          const barW = Math.max(12, (count / maxC) * 80);
-          const color = getTypeColor(ext);
+        sorted.slice(0, 24).map(([ext, count], idx) => {
+          const barPct = Math.max(5, (count / maxC) * 100);
+          const [c1, c2] = gradientColors[idx % gradientColors.length];
           return `<div class="type-badge">
-            <div class="type-bar" style="width:${barW}px;background:${color}40;"></div>
             <span class="type-name">.${esc(ext)}</span>
-            <span class="type-count">${count}</span>
+            <div class="type-bar" style="width:${barPct}%;background:linear-gradient(90deg, ${c1}, ${c2});border-radius:4px;"></div>
+            <span class="type-count">${count.toLocaleString()}</span>
           </div>`;
         }).join('') + '</div>';
     }
@@ -582,7 +591,7 @@ async function refresh() {
 
     updateFavicon(pct);
 
-    document.title = (pct > 0 && pct < 100) ? '[' + pct + '%] CloudMirror' : 'CloudMirror';
+    document.title = (pct > 0 && pct < 100) ? '[' + Math.round(pct) + '%] CloudMirror' : 'CloudMirror';
 
     // Smoothed ETA based on average speed
     if (pct >= 100) {
@@ -657,10 +666,12 @@ async function doAction(action) {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  const btn = document.getElementById(action === 'pause' ? 'btnPause' : 'btnResume');
-  const origText = btn.textContent;
-  btn.disabled = true;
-  btn.innerHTML = `<span class="spinner"></span>${action === 'pause' ? 'Stopping...' : 'Starting...'}`;
+  const barBtn = document.getElementById(action === 'pause' ? 'btnPause2' : 'btnResume2');
+  const origBarHTML = barBtn ? barBtn.innerHTML : '';
+  if (barBtn) {
+    barBtn.disabled = true;
+    barBtn.innerHTML = `<span class="spinner"></span>${action === 'pause' ? 'Stopping...' : 'Starting...'}`;
+  }
   try {
     const res = await fetch(`/api/${action}`, { method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()} });
     const d = await res.json();
@@ -673,23 +684,16 @@ async function doAction(action) {
   } catch(e) {
     showToast('Error: ' + e.message, 'var(--red)');
   }
-  btn.disabled = false;
-  btn.textContent = origText;
+  if (barBtn) { barBtn.disabled = false; barBtn.innerHTML = origBarHTML; }
 }
 
 function updateButtons(isRunning) {
-  const btnPause = document.getElementById('btnPause');
-  const btnResume = document.getElementById('btnResume');
   const btnPause2 = document.getElementById('btnPause2');
   const btnResume2 = document.getElementById('btnResume2');
   if (isRunning) {
-    btnPause.style.display = '';
-    btnResume.style.display = 'none';
     if (btnPause2) btnPause2.style.display = '';
     if (btnResume2) btnResume2.style.display = 'none';
   } else {
-    btnPause.style.display = 'none';
-    btnResume.style.display = '';
     if (btnPause2) btnPause2.style.display = 'none';
     if (btnResume2) btnResume2.style.display = '';
   }
@@ -701,16 +705,26 @@ function toggleTheme() {
   const html = document.documentElement;
   const current = html.getAttribute('data-theme');
   const next = current === 'light' ? 'dark' : 'light';
+  // Disable transitions to prevent grey flash during theme switch
+  document.body.style.transition = 'none';
+  document.querySelectorAll('.card, .header').forEach(el => el.style.transition = 'none');
   html.setAttribute('data-theme', next);
   localStorage.setItem('cloudmirror-theme', next);
+  // Re-enable transitions after paint
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.body.style.transition = '';
+      document.querySelectorAll('.card, .header').forEach(el => el.style.transition = '');
+    });
+  });
   document.getElementById('theme-icon-dark').style.display = next === 'light' ? 'none' : 'block';
   document.getElementById('theme-icon-light').style.display = next === 'light' ? 'block' : 'none';
   // Clear chart cache so they redraw with new theme colors
   if (drawAreaChart._cache) drawAreaChart._cache = {};
   // Redraw charts with new colors
-  drawAreaChart('speedChart', speedHistory, '#22c55e', 'speedGrad', v => fmtSpeed(v), true);
-  drawAreaChart('progressChart', progressHistory, '#3b82f6', 'progGrad', v => v.toFixed(0) + '%', true, 100);
-  drawAreaChart('filesChart', filesHistory, '#a78bfa', 'filesGrad', v => Math.round(v).toLocaleString(), true);
+  drawAreaChart('speedChart', speedHistory, '#6366f1', 'speedGrad', v => fmtSpeed(v), true);
+  drawAreaChart('progressChart', progressHistory, '#22d3ee', 'progGrad', v => v.toFixed(0) + '%', true, 100);
+  drawAreaChart('filesChart', filesHistory, '#818cf8', 'filesGrad', v => Math.round(v).toLocaleString(), true);
 }
 // Load saved theme
 (function() {
@@ -838,7 +852,7 @@ refresh();
 let refreshInterval = setInterval(refresh, 5000);
 window.addEventListener('resize', () => {
   if (drawAreaChart._cache) drawAreaChart._cache = {};
-  drawAreaChart('speedChart', speedHistory, '#22c55e', 'speedGrad', v => fmtSpeed(v), true);
-  drawAreaChart('progressChart', progressHistory, '#3b82f6', 'progGrad', v => v.toFixed(0) + '%', true, 100);
-  drawAreaChart('filesChart', filesHistory, '#a78bfa', 'filesGrad', v => Math.round(v).toLocaleString(), true);
+  drawAreaChart('speedChart', speedHistory, '#6366f1', 'speedGrad', v => fmtSpeed(v), true);
+  drawAreaChart('progressChart', progressHistory, '#22d3ee', 'progGrad', v => v.toFixed(0) + '%', true, 100);
+  drawAreaChart('filesChart', filesHistory, '#818cf8', 'filesGrad', v => Math.round(v).toLocaleString(), true);
 });

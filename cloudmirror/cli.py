@@ -38,9 +38,15 @@ def main() -> None:
         ensure_rclone()
         parse_cli_args(manager, args)
         print()
-        print("  CloudMirror - Advanced Mode")
-        print(f"  Command: {' '.join(manager.rclone_cmd)}")
-        start_dashboard(manager, start_rclone=True)
+        if manager.rclone_pid and not manager.rclone_cmd:
+            # Attach mode - monitoring existing process
+            print(f"  CloudMirror - Monitoring PID {manager.rclone_pid}")
+            print(f"  Log: {manager.log_file}")
+            start_dashboard(manager, start_rclone=False)
+        else:
+            print("  CloudMirror - Advanced Mode")
+            print(f"  Command: {' '.join(manager.rclone_cmd)}")
+            start_dashboard(manager, start_rclone=True)
 
 
 def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> None:
@@ -100,6 +106,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
             if try_port != port:
                 print(f"  Port {port} was busy, using port {try_port} instead.")
                 port = try_port
+            CloudMirrorHandler.actual_port = port
             break
         except OSError as e:
             if ("Address already in use" in str(e) or e.errno == 48) and try_port < port + 4:
@@ -131,9 +138,19 @@ def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
     source = None
     dest = None
     extra_flags = []
+    attach_pid = None
+    attach_log = None
 
     for arg in args:
-        if arg.startswith("--"):
+        if arg.startswith("--attach-pid="):
+            try:
+                attach_pid = int(arg.split("=", 1)[1])
+            except ValueError:
+                print(f"  Error: --attach-pid requires a numeric PID")
+                sys.exit(1)
+        elif arg.startswith("--attach-log="):
+            attach_log = arg.split("=", 1)[1]
+        elif arg.startswith("--"):
             extra_flags.append(arg)
         elif source is None:
             source = arg
@@ -151,6 +168,14 @@ def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
         sys.exit(1)
 
     manager.set_transfer_paths(source, dest)
+
+    # Attach to an existing rclone process instead of starting a new one
+    if attach_pid:
+        manager.rclone_pid = attach_pid
+        manager.transfer_active = True
+        if attach_log:
+            manager.log_file = attach_log
+        return
 
     manager.rclone_cmd = [
         "rclone", "copy", source, dest,

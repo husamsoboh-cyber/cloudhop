@@ -35,6 +35,8 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
     # Class-level reference to the TransferManager instance.
     # Must be set before starting the server.
     manager: Optional[TransferManager] = None
+    # Actual port the server is listening on (set by cli.py after bind).
+    actual_port: int = PORT
 
     # ── Response helpers ────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
         # Only allow CORS from localhost to prevent cross-site request forgery
         # from malicious pages that might try to start transfers.
         origin = self.headers.get("Origin", "")
-        port = PORT
+        port = self.actual_port
         allowed_origins = {f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
         if origin in allowed_origins:
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -278,7 +280,7 @@ class CloudMirrorHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_host():
             return
         self.send_response(204)
-        port = PORT
+        port = self.actual_port
         origin = self.headers.get("Origin", "")
         allowed_origins = {f"http://localhost:{port}", f"http://127.0.0.1:{port}"}
         if origin in allowed_origins:

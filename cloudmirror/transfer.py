@@ -1002,29 +1002,33 @@ class TransferManager:
 
             global_transferred = cumul_bytes + cur_transferred_bytes
 
+            # Global total = best estimate of actual total data.
+            # Use the current session's total (most up-to-date from rclone)
+            # combined with cumulative from prior sessions, but take the max
+            # with orig_total in case the session total is temporarily low.
+            session_based_total = cumul_bytes + cur_total_bytes
             if orig_total > 0:
-                global_total = orig_total
+                global_total = max(orig_total, session_based_total)
             else:
                 global_total = max(
-                    cur_total_bytes, cumul_bytes + cur_transferred_bytes
+                    cur_total_bytes, session_based_total
                 )
 
-            if global_transferred > global_total and global_total > 0:
-                global_total = global_transferred
-
-            global_files_done = cumul_files + result.get("session_files_done", 0)
-            if orig_files > 0:
-                global_files_total = orig_files
-            else:
-                global_files_total = (
-                    result.get("session_files_total", 0) + cumul_files
-                )
-
-            # FIX 2 (parse_current): Cap files/bytes
-            if global_files_total > 0 and global_files_done > global_files_total:
-                global_files_done = global_files_total
+            # Never artificially inflate total to match transferred -
+            # if transferred > total, it means total is stale, not that
+            # we're done. Only cap transferred to total, not the reverse.
             if global_total > 0 and global_transferred > global_total:
                 global_transferred = global_total
+
+            global_files_done = cumul_files + result.get("session_files_done", 0)
+            session_based_files = cumul_files + result.get("session_files_total", 0)
+            if orig_files > 0:
+                global_files_total = max(orig_files, session_based_files)
+            else:
+                global_files_total = session_based_files
+
+            if global_files_total > 0 and global_files_done > global_files_total:
+                global_files_done = global_files_total
 
             session_elapsed_sec = parse_elapsed(
                 result.get("session_elapsed", "")
