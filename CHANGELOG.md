@@ -2,6 +2,50 @@
 
 All notable changes to CloudHop are documented here.
 
+## v0.9.7 (2026-03-20)
+
+### Added
+- **Selective copy**: Browse button to pick source subfolder from wizard
+- **Exclude folder picker**: Pick button to browse and check folders to skip
+- **CLI subcommands**: `cloudhop status`, `cloudhop pause`, `cloudhop resume`, `cloudhop history`
+- **Demo mode**: `/dashboard?demo=true` shows simulated transfer for preview
+- **Auto-update check**: dashboard and wizard notify when a new version is available (checks GitHub Releases)
+- **Error reporting**: "Report this problem" button opens pre-filled GitHub Issue
+- **Need help / Send feedback** links in footer (GitHub Issues + Discussions)
+- **Folder browse API**: `/api/wizard/browse` lists directories on any remote
+
+### Fixed
+- CLI subcommands now correctly obtain CSRF token from HTML page
+- Browse endpoint rejects empty path
+- Empty subfolder browse shows "back to root" link instead of stale content
+
+## v0.8.0 (2026-03-20)
+
+### Added
+- **Transfer verification**: "Verify" button runs `rclone check` after completion
+- **Transfer receipt**: downloadable summary of completed transfer
+- **Safety banner**: "Your files are safe" message on wizard welcome
+- **--fast-list option**: checkbox in wizard (default on), fewer API calls for cloud remotes
+- **Milestone notifications**: browser notification + toast at 25%, 50%, 75%
+- **Transfer history resume**: Resume button in history modal
+- **Smart status messages**: shows "Scanning files..." or "Listing files..." instead of 0 speed
+- **Sound mute toggle**: button on dashboard control bar
+- **Pause on battery**: auto-pause on macOS when running on battery power
+- **Crash backoff**: stops retrying after 3 failures in 5 minutes, shows helpful message
+- **JS error handler**: shows friendly toast instead of silent failure
+- **Completion screen**: upgraded with Verify, Receipt, and "What's next?" section
+- **Enhanced history**: shows total size, file count, and last run date
+
+### Fixed
+- 19 bug fixes including: iCloud source/dest paths, bandwidth dropdown, CLI resume,
+  OAuth polling race condition, AppleScript injection, version mismatch,
+  schedule time validation, path traversal protection, and more
+
+### Changed
+- Wizard language simplified ("Remote" -> "Account", clearer OAuth instructions)
+- Finish time display more prominent on dashboard
+- Per-remote OAuth polling (no more race condition with multiple providers)
+
 ## v0.7.0 (2026-03-20)
 
 ### Added
