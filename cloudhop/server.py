@@ -211,21 +211,20 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 import urllib.request
 
                 req = urllib.request.Request(
-                    "https://pypi.org/pypi/cloudhop/json",
-                    headers={"Accept": "application/json"},
+                    "https://api.github.com/repos/husamsoboh-cyber/cloudhop/releases/latest",
+                    headers={"Accept": "application/vnd.github+json"},
                 )
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read())
-                latest = data.get("info", {}).get("version", __version__)
+                tag = data.get("tag_name", "")
+                latest = tag.lstrip("v") if tag else __version__
                 is_app = getattr(sys, "_MEIPASS", None) is not None
                 self._send_json(
                     {
                         "current": __version__,
                         "latest": latest,
                         "update_available": latest != __version__,
-                        "download_url": "https://github.com/husamsoboh-cyber/cloudhop/releases/latest"
-                        if is_app
-                        else "",
+                        "download_url": data.get("html_url", ""),
                         "pip_command": "" if is_app else "pip install --upgrade cloudhop",
                     }
                 )
