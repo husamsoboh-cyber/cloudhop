@@ -44,13 +44,19 @@ function esc(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+function isSafeUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:';
+  } catch { return false; }
+}
 
 let completionShown = false;
 let failCount = 0;
 let speedHistory = [];
 let progressHistory = [];
-let filesHistory = [];
 let filesLocalHistory = []; // Built from global_files_done each refresh (backend files_history is cumulative-buggy)
+try { const _saved = sessionStorage.getItem('cloudhop_chartHistory'); if (_saved) filesLocalHistory = JSON.parse(_saved); } catch(e) {}
 
 // Styled confirm modal (replaces native confirm())
 function showConfirmModal(message) {
@@ -72,6 +78,24 @@ function showConfirmModal(message) {
     overlay.querySelector('#_cm_ok').focus();
   });
 }
+let _refreshInterval = null;
+let _refreshRate = 0;
+
+function ensurePolling(rate) {
+  if (_refreshInterval && _refreshRate === rate) return;
+  stopPolling();
+  _refreshInterval = setInterval(refresh, rate);
+  _refreshRate = rate;
+}
+
+function stopPolling() {
+  if (_refreshInterval) {
+    clearInterval(_refreshInterval);
+    _refreshInterval = null;
+    _refreshRate = 0;
+  }
+}
+
 let peakSpeedVal = 0;
 let peakSpeedTime = '';
 
@@ -198,6 +222,11 @@ function drawAreaChart(svgId, data, color, gradId, formatY, minZero, maxCap) {
 
   const maxVal = niceMax;
   const minVal = niceMin;
+
+  if (data.length <= 1) {
+    svg.innerHTML = html;
+    return;
+  }
 
   let segments = [];
   let current = [];
@@ -458,7 +487,12 @@ async function refresh() {
       d = getDemoData();
     } else {
       const res = await fetch('/api/status');
-      if (!res.ok) return;
+      if (!res.ok) {
+        failCount++;
+        console.error('Dashboard poll failed with HTTP', res.status);
+        if (failCount >= 3) { setDisplay('connLost', 'block'); document.body.style.paddingTop = '48px'; const hdr = document.querySelector('.header'); if (hdr) hdr.style.top = '48px'; }
+        return;
+      }
       d = await res.json();
     }
     failCount = 0;
@@ -521,8 +555,7 @@ async function refresh() {
           completionShown = true;
           showCompletionScreen(d);
       }
-      if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
-      refreshInterval = setInterval(refresh, 30000);
+      ensurePolling(30000);
     } else if (d.rclone_running && !d.speed && !d.session_num) {
       updateStatusDot('active');
       document.getElementById('statusText').textContent = 'Starting...';
@@ -558,7 +591,7 @@ async function refresh() {
         document.getElementById('statusText').textContent = 'Transferring';
       }
       updateButtons(true);
-      if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = setInterval(refresh, 5000); }
+      ensurePolling(5000);
     }
 
     // Empty state: show when truly no transfer (not running, no data)
@@ -589,6 +622,7 @@ async function refresh() {
     if (d.global_files_done !== undefined && d.global_files_done > 0) {
       filesLocalHistory.push(d.global_files_done);
       if (filesLocalHistory.length > 200) filesLocalHistory = filesLocalHistory.slice(-200);
+      try { sessionStorage.setItem('cloudhop_chartHistory', JSON.stringify(filesLocalHistory)); } catch(e) {}
     }
 
     // Wall clock + uptime
@@ -826,6 +860,7 @@ async function refresh() {
     if (Object.keys(ftData).length > 0) {
       const sorted = Object.entries(ftData).sort((a,b) => b[1]-a[1]);
       const maxC = sorted[0][1];
+      if (maxC === 0) return;
       // Gradient palette matching prototype: deep blue/indigo → cyan/teal
       const gradientColors = [
         ['#6366f1','#22d3ee'], ['#818cf8','#22d3ee'], ['#7c3aed','#06b6d4'],
@@ -1222,7 +1257,7 @@ async function showHistory() {
       if (lastRun) html += ' &middot; ' + esc(lastRun);
       html += '</div></div>';
       if (hasCmd) {
-        html += '<button onclick="resumeFromHistory(\'' + esc(h.id) + '\')" style="padding:6px 14px;border-radius:8px;border:1px solid rgba(52,211,153,0.3);background:rgba(52,211,153,0.08);color:var(--green);cursor:pointer;font-size:0.75rem;font-weight:600;white-space:nowrap;flex-shrink:0;">Resume</button>';
+        html += '<button class="history-resume-btn" style="padding:6px 14px;border-radius:8px;border:1px solid rgba(52,211,153,0.3);background:rgba(52,211,153,0.08);color:var(--green);cursor:pointer;font-size:0.75rem;font-weight:600;white-space:nowrap;flex-shrink:0;">Resume</button>';
       }
       html += '</div>';
     });
@@ -1230,6 +1265,10 @@ async function showHistory() {
     html += '</div></div>';
     document.body.insertAdjacentHTML('beforeend', html);
     const histModal = document.querySelector('[data-history-modal]');
+    const resumeData = data.filter(h => h.cmd && h.cmd.length > 0);
+    histModal.querySelectorAll('.history-resume-btn').forEach((btn, i) => {
+      btn.addEventListener('click', () => resumeFromHistory(resumeData[i].id));
+    });
     function histEsc(e) { if (e.key === 'Escape' && histModal) { histModal.remove(); document.removeEventListener('keydown', histEsc); } }
     document.addEventListener('keydown', histEsc);
   } catch(e) { showToast('Could not load history.', 'var(--red)'); }
@@ -1364,7 +1403,7 @@ if (_isDemo) {
 }
 
 refresh();
-let refreshInterval = setInterval(refresh, _isDemo ? 2000 : 5000);
+ensurePolling(_isDemo ? 2000 : 5000);
 window.addEventListener('resize', () => {
   if (drawAreaChart._cache) drawAreaChart._cache = {};
   drawAreaChart('speedChart', speedHistory, '#6366f1', 'speedGrad', fmtSpeedShort, true);
@@ -1381,18 +1420,23 @@ window.addEventListener('resize', () => {
       const action = document.getElementById('updateAction');
       if (banner && msg && action) {
         msg.textContent = 'CloudHop ' + d.latest + ' is available (you have ' + d.current + ')';
-        if (d.download_url) {
+        if (d.download_url && isSafeUrl(d.download_url)) {
           action.textContent = 'Download update';
           action.href = d.download_url;
           action.target = '_blank';
-        } else if (d.pip_command) {
-          action.textContent = 'Update: ' + d.pip_command;
-          action.href = '#';
-          action.onclick = function(e) {
-            e.preventDefault();
-            navigator.clipboard.writeText(d.pip_command);
-            action.textContent = 'Copied to clipboard!';
-          };
+        } else {
+          if (d.download_url) {
+            console.error('CloudHop: update download URL rejected by validation:', d.download_url);
+          }
+          if (d.pip_command) {
+            action.textContent = 'Update: ' + d.pip_command;
+            action.href = '#';
+            action.onclick = function(e) {
+              e.preventDefault();
+              navigator.clipboard.writeText(d.pip_command);
+              action.textContent = 'Copied to clipboard!';
+            };
+          }
         }
         banner.style.display = 'block';
       }

@@ -37,12 +37,17 @@ import http.server
 import json
 import logging
 import os
+import re
 import secrets
 import subprocess
 import sys
+import threading
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("cloudhop.server")
+
+# Serialises concurrent rclone config create calls (e.g. two browser tabs).
+_configure_lock = threading.Lock()
 
 from .templates import render
 from .transfer import (
@@ -50,6 +55,7 @@ from .transfer import (
     find_rclone,
     get_existing_remotes,
     remote_exists,
+    validate_rclone_cmd,
 )
 from .utils import (
     _CM_DIR,
@@ -431,9 +437,11 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 logger.info("rclone already installed at %s", path)
                 self._send_json({"ok": True, "path": path})
                 return
+            import hashlib
             import platform as _platform
             import shutil
             import tempfile
+            import zipfile
 
             system = _platform.system().lower()
             logger.info("Attempting to install rclone on %s", system)
@@ -464,69 +472,118 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                             self._send_json({"ok": True, "path": path})
                             return
                     logger.warning(
-                        "Homebrew install failed (rc=%d), trying curl method",
+                        "Homebrew install failed (rc=%d), trying direct download",
                         result.returncode,
                     )
 
-                # Download install script to temp dir, then execute it
-                script_path = os.path.join(tempfile.gettempdir(), "rclone_install.sh")
-                logger.info("Downloading rclone install script to %s", script_path)
-                dl_result = subprocess.run(
-                    ["curl", "-fsSL", "-o", script_path, "https://rclone.org/install.sh"],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if dl_result.returncode != 0:
-                    logger.error("Failed to download rclone install script: %s", dl_result.stderr)
-                    self._send_json(
-                        {
-                            "ok": False,
-                            "msg": "Failed to download installer. Please install manually from https://rclone.org/install/",
-                        }
-                    )
-                    return
-
-                os.chmod(script_path, 0o755)
-
-                # Linux uses sudo if available; macOS curl fallback runs without sudo
-                if system == "linux" and shutil.which("sudo"):
-                    install_cmd = ["sudo", "bash", script_path]
+                # Download rclone binary directly (no script execution)
+                machine = _platform.machine().lower()
+                if machine in ("x86_64", "amd64"):
+                    arch = "amd64"
+                elif machine in ("aarch64", "arm64"):
+                    arch = "arm64"
                 else:
-                    install_cmd = ["bash", script_path]
+                    arch = machine
 
-                logger.info("Running rclone install script: %s", install_cmd)
-                install_result = subprocess.run(
-                    install_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
+                os_name = "linux" if system == "linux" else "osx"
+                zip_name = f"rclone-current-{os_name}-{arch}.zip"
+                download_url = f"https://downloads.rclone.org/{zip_name}"
+                checksum_url = f"{download_url}.sha256sum"
 
-                # Clean up downloaded script
+                dl_dir = tempfile.mkdtemp(prefix="rclone_install_")
                 try:
-                    os.unlink(script_path)
-                except OSError:
-                    pass
+                    zip_path = os.path.join(dl_dir, zip_name)
+                    checksum_path = os.path.join(dl_dir, "sha256sum")
 
-                if install_result.returncode == 0:
-                    path = find_rclone()
-                    if path:
-                        logger.info("rclone installed successfully at %s", path)
-                        self._send_json({"ok": True, "path": path})
+                    logger.info("Downloading rclone binary from %s", download_url)
+                    dl_result = subprocess.run(
+                        ["curl", "-fsSL", "-o", zip_path, download_url],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if dl_result.returncode != 0:
+                        logger.error(
+                            "Failed to download rclone binary: %s", dl_result.stderr
+                        )
+                        self._send_json(
+                            {
+                                "ok": False,
+                                "msg": "Failed to download rclone. Please install manually from https://rclone.org/install/",
+                            }
+                        )
                         return
 
-                logger.error(
-                    "rclone install script failed (rc=%d): %s",
-                    install_result.returncode,
-                    install_result.stderr,
-                )
-                self._send_json(
-                    {
-                        "ok": False,
-                        "msg": "Installation failed. Please install manually from https://rclone.org/install/",
-                    }
-                )
+                    logger.info("Downloading SHA256 checksum from %s", checksum_url)
+                    cs_result = subprocess.run(
+                        ["curl", "-fsSL", "-o", checksum_path, checksum_url],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    if cs_result.returncode != 0:
+                        logger.error(
+                            "Failed to download checksum file: %s", cs_result.stderr
+                        )
+                        self._send_json(
+                            {
+                                "ok": False,
+                                "msg": "Failed to verify download. Please install manually from https://rclone.org/install/",
+                            }
+                        )
+                        return
+
+                    with open(checksum_path) as cf:
+                        expected_hash = cf.read().strip().split()[0].lower()
+
+                    sha256 = hashlib.sha256()
+                    with open(zip_path, "rb") as zf:
+                        for chunk in iter(lambda: zf.read(8192), b""):
+                            sha256.update(chunk)
+                    actual_hash = sha256.hexdigest().lower()
+
+                    if actual_hash != expected_hash:
+                        logger.error(
+                            "SHA256 checksum mismatch: expected %s, got %s",
+                            expected_hash,
+                            actual_hash,
+                        )
+                        self._send_json(
+                            {
+                                "ok": False,
+                                "msg": "Checksum verification failed. Please install manually from https://rclone.org/install/",
+                            }
+                        )
+                        return
+                    logger.info("SHA256 checksum verified successfully")
+
+                    with zipfile.ZipFile(zip_path) as archive:
+                        rclone_entry = None
+                        for name in archive.namelist():
+                            if name.endswith("/rclone"):
+                                rclone_entry = name
+                                break
+                        if not rclone_entry:
+                            raise RuntimeError("rclone binary not found in archive")
+                        logger.info("Extracting %s", rclone_entry)
+                        archive.extract(rclone_entry, dl_dir)
+                        extracted_binary = os.path.join(dl_dir, rclone_entry)
+
+                    install_dir = os.path.expanduser("~/.local/bin")
+                    os.makedirs(install_dir, exist_ok=True)
+                    dest = os.path.join(install_dir, "rclone")
+                    shutil.copy2(extracted_binary, dest)
+                    os.chmod(dest, 0o755)
+                    logger.info("rclone binary installed to %s", dest)
+
+                    path = find_rclone()
+                    if not path:
+                        path = dest
+                    logger.info("rclone installed successfully at %s", path)
+                    self._send_json({"ok": True, "path": path})
+                    return
+                finally:
+                    shutil.rmtree(dl_dir, ignore_errors=True)
             except subprocess.TimeoutExpired:
                 logger.error("rclone installation timed out after 120 seconds")
                 self._send_json(
@@ -563,10 +620,22 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 if twofa and (len(twofa) != 6 or not twofa.isdigit()):
                     self._send_json({"ok": False, "msg": "Invalid 2FA code"}, 400)
                     return
-                result = self.manager.configure_remote(
-                    name, rtype, username=username, password=password,
-                    twofa=twofa or None,
-                )
+                if not _configure_lock.acquire(blocking=False):
+                    logger.info("configure-remote: lock already held, returning 409")
+                    self._send_json(
+                        {"ok": False, "msg": "Configuration in progress, please wait"},
+                        409,
+                    )
+                    return
+                try:
+                    logger.info("configure-remote: acquired lock for remote '%s'", name)
+                    result = self.manager.configure_remote(
+                        name, rtype, username=username, password=password,
+                        twofa=twofa or None,
+                    )
+                finally:
+                    _configure_lock.release()
+                    logger.info("configure-remote: released lock for remote '%s'", name)
                 self._send_json(result)
         elif self.path == "/api/wizard/check-remote":
             body = self._read_body()
@@ -581,9 +650,24 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             source = body.get("path", "")
-            if not source or not validate_rclone_input(source, "path"):
+            if not source:
+                source = os.path.expanduser("~")
+            if not validate_rclone_input(source, "path"):
                 self._send_json({"ok": False, "msg": "Invalid path"}, 400)
                 return
+            # Restrict local paths (no ":" means not a remote) to home directory
+            if ":" not in source:
+                home = os.path.expanduser("~")
+                real_path = os.path.realpath(os.path.expandvars(source))
+                if not real_path.startswith(home + os.sep) and real_path != home:
+                    logger.info(
+                        "Browse blocked: path %s is outside home directory", source
+                    )
+                    self._send_json(
+                        {"ok": False, "msg": "Browsing is restricted to home directory"},
+                        403,
+                    )
+                    return
             try:
                 result = subprocess.run(
                     ["rclone", "lsjson", source, "--dirs-only", "--no-modtime"],
@@ -651,7 +735,6 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
-            import re
 
             start_time = body.get("start_time", "22:00")
             end_time = body.get("end_time", "06:00")
@@ -728,7 +811,8 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             transfer_id = body.get("id", "")
-            if not transfer_id or not validate_rclone_input(transfer_id, "id"):
+            if not transfer_id or not re.match(r'^[0-9a-f]{8}$', transfer_id):
+                logger.info("Invalid transfer ID format rejected: %r", transfer_id)
                 self._send_json({"ok": False, "msg": "Invalid transfer ID"}, 400)
                 return
             state_file = os.path.join(_CM_DIR, f"cloudhop_{transfer_id}_state.json")
@@ -745,6 +829,10 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 cmd = saved.get("rclone_cmd", [])
                 if not cmd:
                     self._send_json({"ok": False, "msg": "No command saved for this transfer"})
+                    return
+                if not validate_rclone_cmd(cmd):
+                    logger.error("History resume refused: command failed validation: %s", cmd)
+                    self._send_json({"ok": False, "msg": "Saved command failed security validation"}, 400)
                     return
                 # Switch manager to this transfer (under lock)
                 log_file = os.path.join(_CM_DIR, f"cloudhop_{transfer_id}.log")

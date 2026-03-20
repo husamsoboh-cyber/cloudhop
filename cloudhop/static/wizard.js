@@ -89,6 +89,12 @@ function esc(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+function isSafeUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:';
+  } catch { return false; }
+}
 // State
 let currentStep = 1;
 let sourceProvider = null;
@@ -158,10 +164,29 @@ function toggleTheme() {
     if (d.update_available) {
       const el = document.getElementById('welcomeRcloneCheck');
       if (el) {
-        const link = d.download_url
-          ? '<a href="' + d.download_url + '" target="_blank" style="color:var(--blue);text-decoration:underline;">Download ' + d.latest + '</a>'
-          : '<code style="background:var(--card);padding:2px 6px;border-radius:4px;">' + d.pip_command + '</code>';
-        el.innerHTML = '<span style="color:var(--blue)">Update available: v' + d.latest + ' ' + link + '</span>';
+        el.innerHTML = '';
+        const span = document.createElement('span');
+        span.style.color = 'var(--blue)';
+        span.textContent = 'Update available: v' + d.latest + ' ';
+        if (d.download_url && isSafeUrl(d.download_url)) {
+          const a = document.createElement('a');
+          a.href = d.download_url;
+          a.target = '_blank';
+          a.style.cssText = 'color:var(--blue);text-decoration:underline;';
+          a.textContent = 'Download ' + d.latest;
+          span.appendChild(a);
+        } else if (d.pip_command) {
+          if (d.download_url) {
+            console.error('CloudHop: update download URL rejected by validation:', d.download_url);
+          }
+          const code = document.createElement('code');
+          code.style.cssText = 'background:var(--card);padding:2px 6px;border-radius:4px;';
+          code.textContent = d.pip_command;
+          span.appendChild(code);
+        } else if (d.download_url) {
+          console.error('CloudHop: update download URL rejected by validation:', d.download_url);
+        }
+        el.appendChild(span);
       }
     }
   }).catch(() => {});
@@ -195,10 +220,27 @@ function showConfirmModal(message) {
   });
 }
 
+function showStepError(msg) {
+  const existing = document.getElementById('_stepError');
+  if (existing) existing.remove();
+  const d = document.createElement('div');
+  d.id = '_stepError';
+  d.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);padding:10px 20px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;font-size:0.85rem;color:var(--red);z-index:300;text-align:center;';
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => { if (d.parentNode) d.remove(); }, 3000);
+}
+
 // Navigation
 async function goTo(step) {
-  if (step >= 3 && !sourceProvider) return;
-  if (step >= 4 && !destProvider) return;
+  if (step >= 3 && !sourceProvider) {
+    showStepError('Please select a source provider to continue');
+    return;
+  }
+  if (step >= 4 && !destProvider) {
+    showStepError('Please select a destination provider to continue');
+    return;
+  }
   if (step === 3) updateDestGrid();
   if (step === 5) buildConnectStep();
   if (step === 6) {
@@ -272,7 +314,17 @@ async function goTo(step) {
   try {
     sessionStorage.setItem('cloudhop_wizard', JSON.stringify({
       step: currentStep, sourceProvider, sourceName, sourceDisplayName,
-      destProvider, destName, destDisplayName, selectedSpeed
+      destProvider, destName, destDisplayName, selectedSpeed,
+      sourcePath: (document.getElementById('sourcePathInput') || {}).value || '',
+      destPath: (document.getElementById('destPathInput') || {}).value || '',
+      sourceOther: (document.getElementById('sourceOtherInput') || {}).value || '',
+      destOther: (document.getElementById('destOtherInput') || {}).value || '',
+      sourceSubfolder: (document.getElementById('sourceSubfolder') || {}).value || '',
+      destSubfolder: (document.getElementById('destSubfolder') || {}).value || '',
+      excludePatterns: (document.getElementById('excludePatterns') || {}).value || '',
+      bwLimit: (document.getElementById('bwLimit') || {}).value || '',
+      useChecksum: (document.getElementById('useChecksum') || {}).checked || false,
+      useFastList: (document.getElementById('useFastList') || {}).checked || false
     }));
   } catch(e) {}
 }
@@ -319,6 +371,17 @@ function toggleAdvanced() {
       const dc = document.querySelector('#destGrid [data-provider="'+destProvider+'"]');
       if (dc) dc.classList.add('selected');
     }
+    // Restore form field values
+    if (s.sourcePath) { const el = document.getElementById('sourcePathInput'); if (el) el.value = s.sourcePath; }
+    if (s.destPath) { const el = document.getElementById('destPathInput'); if (el) el.value = s.destPath; }
+    if (s.sourceOther) { const el = document.getElementById('sourceOtherInput'); if (el) el.value = s.sourceOther; }
+    if (s.destOther) { const el = document.getElementById('destOtherInput'); if (el) el.value = s.destOther; }
+    if (s.sourceSubfolder) { const el = document.getElementById('sourceSubfolder'); if (el) el.value = s.sourceSubfolder; }
+    if (s.destSubfolder) { const el = document.getElementById('destSubfolder'); if (el) el.value = s.destSubfolder; }
+    if (s.excludePatterns) { const el = document.getElementById('excludePatterns'); if (el) el.value = s.excludePatterns; }
+    if (s.bwLimit) { const el = document.getElementById('bwLimit'); if (el) el.value = s.bwLimit; }
+    if (s.useChecksum) { const el = document.getElementById('useChecksum'); if (el) el.checked = true; }
+    if (s.useFastList === false) { const el = document.getElementById('useFastList'); if (el) el.checked = false; }
     if (s.step > 1) goTo(s.step);
   } catch(e) {}
 })();
@@ -504,28 +567,29 @@ async function buildConnectStep() {
       <div class="connect-info">
         <div class="connect-icon">${providerIcons[item.provider]}</div>
         <div>
-          <div class="connect-name">${item.display}</div>
+          <div class="connect-name">${esc(item.display)}</div>
           <div class="connect-status ${connected ? 'ok' : 'pending'}" id="status-${item.name}">
             ${connected ? 'Connected' : 'Not connected'}
           </div>
         </div>
       </div>
       <div id="action-${item.name}">
-        ${connected
-          ? '<div class="checkmark">✓</div>'
-          : `<button class="btn btn-primary btn-connect" onclick="connectRemote('${item.name.replace(/'/g, "\\'")}','${item.provider.replace(/'/g, "\\'")}','${item.display.replace(/'/g, "\\'")}')">Connect ${esc(item.display)}</button>`
-        }
+        ${connected ? '<div class="checkmark">✓</div>' : ''}
       </div>
     `;
+    if (!connected) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary btn-connect';
+      btn.textContent = 'Connect ' + item.display;
+      btn.addEventListener('click', () => connectRemote(item.name, item.provider, item.display));
+      div.lastElementChild.appendChild(btn);
+    }
     list.appendChild(div);
   }
   checkAllConnected();
 }
 
 async function connectRemote(name, type, display, username, password, twofa) {
-  const safeName = name.replace(/'/g, "\\'");
-  const safeType = type.replace(/'/g, "\\'");
-  const safeDisplay = display.replace(/'/g, "\\'");
   const actionEl = document.getElementById('action-' + name);
   const statusEl = document.getElementById('status-' + name);
   actionEl.innerHTML = '<div class="spinner"></div>';
@@ -549,6 +613,7 @@ async function connectRemote(name, type, display, username, password, twofa) {
     });
     const data = await resp.json();
     if (data.ok) {
+      clearPolling(name);
       statusEl.textContent = 'Connected';
       statusEl.className = 'connect-status ok';
       actionEl.innerHTML = '<div class="checkmark">✓</div>';
@@ -559,19 +624,54 @@ async function connectRemote(name, type, display, username, password, twofa) {
       const userLabel = data.user_label || 'Username';
       const passLabel = data.pass_label || 'Password';
       const is2fa = type === 'protondrive';
-      const twofaHtml = is2fa ? `<input class="form-input" id="cred-2fa-${safeName}" type="text" placeholder="2FA code (if enabled)" style="padding:8px 12px;font-size:0.8rem;" maxlength="6" inputmode="numeric">` : '';
-      const twofaArg = is2fa ? `,(document.getElementById('cred-2fa-${safeName}')||{}).value||''` : '';
-      actionEl.innerHTML = `
-        <div style="display:flex;flex-direction:column;gap:8px;min-width:220px;">
-          <input class="form-input" id="cred-user-${safeName}" type="text" placeholder="${userLabel}" style="padding:8px 12px;font-size:0.8rem;">
-          <input class="form-input" id="cred-pass-${safeName}" type="password" placeholder="${passLabel}" style="padding:8px 12px;font-size:0.8rem;">
-          ${twofaHtml}
-          <button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}', document.getElementById('cred-user-${safeName}').value, document.getElementById('cred-pass-${safeName}').value${twofaArg})">Connect</button>
-        </div>`;
+      const formDiv = document.createElement('div');
+      formDiv.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-width:220px;';
+      const userInput = document.createElement('input');
+      userInput.className = 'form-input';
+      userInput.id = 'cred-user-' + name;
+      userInput.type = 'text';
+      userInput.placeholder = userLabel;
+      userInput.style.cssText = 'padding:8px 12px;font-size:0.8rem;';
+      formDiv.appendChild(userInput);
+      const passInput = document.createElement('input');
+      passInput.className = 'form-input';
+      passInput.id = 'cred-pass-' + name;
+      passInput.type = 'password';
+      passInput.placeholder = passLabel;
+      passInput.style.cssText = 'padding:8px 12px;font-size:0.8rem;';
+      formDiv.appendChild(passInput);
+      if (is2fa) {
+        const twofaInput = document.createElement('input');
+        twofaInput.className = 'form-input';
+        twofaInput.id = 'cred-2fa-' + name;
+        twofaInput.type = 'text';
+        twofaInput.placeholder = '2FA code (if enabled)';
+        twofaInput.style.cssText = 'padding:8px 12px;font-size:0.8rem;';
+        twofaInput.maxLength = 6;
+        twofaInput.inputMode = 'numeric';
+        formDiv.appendChild(twofaInput);
+      }
+      const credBtn = document.createElement('button');
+      credBtn.className = 'btn btn-primary btn-connect';
+      credBtn.textContent = 'Connect';
+      credBtn.addEventListener('click', () => {
+        const u = document.getElementById('cred-user-' + name).value;
+        const p = document.getElementById('cred-pass-' + name).value;
+        const t = is2fa ? (document.getElementById('cred-2fa-' + name) || {}).value || '' : undefined;
+        connectRemote(name, type, display, u, p, t);
+      });
+      formDiv.appendChild(credBtn);
+      actionEl.innerHTML = '';
+      actionEl.appendChild(formDiv);
     } else {
       statusEl.textContent = data.msg || 'Failed to connect';
       statusEl.className = 'connect-status pending';
-      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}')">Retry</button>`;
+      actionEl.innerHTML = '';
+      const retryBtn = document.createElement('button');
+      retryBtn.className = 'btn btn-primary btn-connect';
+      retryBtn.textContent = 'Retry';
+      retryBtn.addEventListener('click', () => connectRemote(name, type, display));
+      actionEl.appendChild(retryBtn);
     }
   } catch(e) {
     if (['drive','onedrive','dropbox'].includes(type)) {
@@ -580,7 +680,12 @@ async function connectRemote(name, type, display, username, password, twofa) {
     } else {
       statusEl.textContent = 'Failed to connect';
       statusEl.className = 'connect-status pending';
-      actionEl.innerHTML = `<button class="btn btn-primary btn-connect" onclick="connectRemote('${safeName}','${safeType}','${safeDisplay}')">Retry</button>`;
+      actionEl.innerHTML = '';
+      const retryBtn = document.createElement('button');
+      retryBtn.className = 'btn btn-primary btn-connect';
+      retryBtn.textContent = 'Retry';
+      retryBtn.addEventListener('click', () => connectRemote(name, type, display));
+      actionEl.appendChild(retryBtn);
     }
   }
   checkAllConnected();
@@ -598,9 +703,16 @@ function checkAllConnected() {
 
 // Poll for remote connection (for OAuth flow) - per-remote polling
 const activePolls = {};
-function startPolling(name, display, type) {
-  // Clear any existing poll for this remote
+const activePollTimeouts = {};
+
+function clearPolling(name) {
   if (activePolls[name]) { clearInterval(activePolls[name]); delete activePolls[name]; }
+  if (activePollTimeouts[name]) { clearTimeout(activePollTimeouts[name]); delete activePollTimeouts[name]; }
+}
+
+function startPolling(name, display, type) {
+  // Clear any existing poll and timeout for this remote
+  clearPolling(name);
   const remoteName = name;
   const remoteType = type;
   activePolls[name] = setInterval(async () => {
@@ -612,8 +724,7 @@ function startPolling(name, display, type) {
       });
       const data = await resp.json();
       if (data.configured) {
-        clearInterval(activePolls[name]);
-        delete activePolls[name];
+        clearPolling(name);
         const statusEl = document.getElementById('status-' + name);
         const actionEl = document.getElementById('action-' + name);
         if (statusEl) {
@@ -629,16 +740,20 @@ function startPolling(name, display, type) {
     } catch(e) {}
   }, 2000);
   // Timeout after 2 minutes
-  setTimeout(() => {
+  activePollTimeouts[name] = setTimeout(() => {
     if (activePolls[name]) {
-      clearInterval(activePolls[name]);
-      delete activePolls[name];
+      clearPolling(name);
       const statusEl = document.getElementById('status-' + remoteName);
       const actionEl = document.getElementById('action-' + remoteName);
       if (statusEl && !statusEl.classList.contains('ok')) {
         statusEl.innerHTML = '<span style="color:var(--orange);">Timed out.</span>';
         if (actionEl) {
-          actionEl.innerHTML = '<button class="btn btn-primary btn-connect" onclick="connectRemote(\'' + remoteName.replace(/'/g, "\\'") + '\',\'' + remoteType.replace(/'/g, "\\'") + '\',\'' + display.replace(/'/g, "\\'") + '\')">Try again</button>';
+          actionEl.innerHTML = '';
+          const retryBtn = document.createElement('button');
+          retryBtn.className = 'btn btn-primary btn-connect';
+          retryBtn.textContent = 'Try again';
+          retryBtn.addEventListener('click', () => connectRemote(remoteName, remoteType, display));
+          actionEl.appendChild(retryBtn);
         }
       }
     }
@@ -769,12 +884,15 @@ async function previewTransfer() {
 }
 
 async function startTransfer() {
+  if (startTransfer._running) return;
+  startTransfer._running = true;
   const btn = document.getElementById('startBtn');
-  if (btn.disabled) return;
+  if (btn.disabled) { startTransfer._running = false; return; }
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Starting transfer...';
 
   const safetyTimeout = setTimeout(() => {
+    startTransfer._running = false;
     btn.disabled = false;
     btn.textContent = 'Start Transfer';
     showWizardError('Transfer may have started. Check the dashboard.');
@@ -790,6 +908,7 @@ async function startTransfer() {
       console.error('startTransfer: missing paths, src=' + src + ' dst=' + dst);
       showWizardError('Please select both source and destination folders.');
       clearTimeout(safetyTimeout);
+      startTransfer._running = false;
       btn.disabled = false;
       btn.textContent = 'Start Transfer';
       return;
@@ -841,6 +960,7 @@ async function startTransfer() {
       window.location.href = '/dashboard';
     } else {
       console.error('startTransfer: server returned error:', data.msg);
+      startTransfer._running = false;
       btn.disabled = false;
       btn.textContent = 'Start Transfer';
       showWizardError('Error: ' + (data.msg || 'Failed to start transfer'));
@@ -848,6 +968,7 @@ async function startTransfer() {
   } catch(e) {
     console.error('startTransfer: exception:', e);
     clearTimeout(safetyTimeout);
+    startTransfer._running = false;
     btn.disabled = false;
     btn.textContent = 'Start Transfer';
     showWizardError('Error starting transfer: ' + (e.message || 'Unknown error'));
@@ -950,26 +1071,52 @@ async function browseSource(subpath) {
     const data = await resp.json();
     if (data.ok && data.folders) {
       if (data.folders.length === 0) {
-        container.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:0.8rem;">No subfolders found.' + (subpath ? ' <span style="color:var(--blue);cursor:pointer;" onclick="browseSource()">Back to root</span>' : '') + '</div>';
+        container.innerHTML = '';
+        const noFolders = document.createElement('div');
+        noFolders.style.cssText = 'padding:8px;color:var(--text-muted);font-size:0.8rem;';
+        noFolders.textContent = 'No subfolders found.';
+        if (subpath) {
+          noFolders.appendChild(document.createTextNode(' '));
+          const backLink = document.createElement('span');
+          backLink.style.cssText = 'color:var(--blue);cursor:pointer;';
+          backLink.textContent = 'Back to root';
+          backLink.addEventListener('click', () => browseSource());
+          noFolders.appendChild(backLink);
+        }
+        container.appendChild(noFolders);
         return;
       }
-      let html = '';
+      container.innerHTML = '';
       if (subpath) {
-        // Add back button
         const parent = subpath.includes('/') ? subpath.substring(0, subpath.lastIndexOf('/')) : '';
-        html += '<div style="padding:6px 8px;cursor:pointer;font-size:0.8rem;color:var(--blue);display:flex;align-items:center;gap:4px;" onclick="browseSource(' + (parent ? '\'' + esc(parent).replace(/'/g, "\\'") + '\'' : '') + ')">';
-        html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back</div>';
+        const backDiv = document.createElement('div');
+        backDiv.style.cssText = 'padding:6px 8px;cursor:pointer;font-size:0.8rem;color:var(--blue);display:flex;align-items:center;gap:4px;';
+        backDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back';
+        backDiv.addEventListener('click', () => browseSource(parent || undefined));
+        container.appendChild(backDiv);
       }
       data.folders.forEach(f => {
         const fullPath = subpath ? subpath + '/' + f.name : f.name;
-        html += '<div style="padding:6px 8px;cursor:pointer;font-size:0.8rem;color:var(--text);border-radius:6px;display:flex;align-items:center;gap:6px;justify-content:space-between;" onmouseover="this.style.background=\'var(--card-hover)\'" onmouseout="this.style.background=\'transparent\'">';
-        html += '<span onclick="browseSource(\'' + esc(fullPath).replace(/'/g, "\\'") + '\')" style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">';
-        html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--blue)" opacity="0.7"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>';
-        html += '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(f.name) + '</span></span>';
-        html += '<button onclick="event.stopPropagation();document.getElementById(\'sourceSubfolder\').value=\'' + esc(fullPath).replace(/'/g, "\\'") + '\'" style="padding:2px 8px;border-radius:4px;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);cursor:pointer;font-size:0.7rem;flex-shrink:0;">Select</button>';
-        html += '</div>';
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 8px;cursor:pointer;font-size:0.8rem;color:var(--text);border-radius:6px;display:flex;align-items:center;gap:6px;justify-content:space-between;';
+        row.addEventListener('mouseover', function() { this.style.background = 'var(--card-hover)'; });
+        row.addEventListener('mouseout', function() { this.style.background = 'transparent'; });
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;min-width:0;';
+        nameSpan.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--blue)" opacity="0.7"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>';
+        const nameText = document.createElement('span');
+        nameText.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        nameText.textContent = f.name;
+        nameSpan.appendChild(nameText);
+        nameSpan.addEventListener('click', () => browseSource(fullPath));
+        row.appendChild(nameSpan);
+        const selectBtn = document.createElement('button');
+        selectBtn.style.cssText = 'padding:2px 8px;border-radius:4px;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);cursor:pointer;font-size:0.7rem;flex-shrink:0;';
+        selectBtn.textContent = 'Select';
+        selectBtn.addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('sourceSubfolder').value = fullPath; });
+        row.appendChild(selectBtn);
+        container.appendChild(row);
       });
-      container.innerHTML = html;
     } else {
       container.innerHTML = '<div style="padding:8px;color:var(--red);font-size:0.8rem;">' + esc(data.msg || 'Could not load folders') + '</div>';
     }

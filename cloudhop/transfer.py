@@ -45,13 +45,16 @@ Data flow
    numbers (bytes, files, %, ETA) that span all sessions.
 """
 
+import copy
 import hashlib
 import json
 import logging
 import os
 import platform
+import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -188,6 +191,57 @@ def remote_exists(name: str) -> bool:
     return name in get_existing_remotes()
 
 
+# ---- rclone command validation -----------------------------------------------
+
+# Flags that are safe in a resumed rclone command.  Only --flag=value forms
+# are accepted; bare positional args are allowed only if they look like paths
+# (no shell metacharacters).
+_KNOWN_RCLONE_FLAGS = {
+    "--bwlimit", "--buffer-size", "--checkers", "--checksum",
+    "--config", "--contimeout", "--create-empty-src-dirs",
+    "--drive-chunk-size", "--dry-run", "--exclude",
+    "--fast-list", "--include", "--log-file", "--log-level",
+    "--low-level-retries", "--multi-thread-streams", "--no-traverse",
+    "--progress", "--rc", "--rc-addr", "--rc-pass", "--rc-user",
+    "--retries", "--stats", "--stats-log-level", "--timeout",
+    "--tpslimit", "--transfers", "--verbose",
+}
+
+_SHELL_META = set(";&|`$(){}!><\n\r\0")
+
+
+def validate_rclone_cmd(cmd: list) -> bool:
+    """Validate that *cmd* looks like a legitimate rclone command.
+
+    Returns True if the command passes validation, False otherwise.
+    """
+    if not cmd:
+        logger.error("validate_rclone_cmd: empty command")
+        return False
+
+    # First element must be rclone
+    exe = os.path.basename(cmd[0])
+    if exe not in ("rclone", "rclone.exe"):
+        logger.error("validate_rclone_cmd: executable is not rclone: %s", cmd[0])
+        return False
+
+    for arg in cmd[1:]:
+        # Check for shell metacharacters
+        if any(c in arg for c in _SHELL_META):
+            logger.error("validate_rclone_cmd: shell metacharacter in arg: %s", arg)
+            return False
+
+        if arg.startswith("--"):
+            flag_name = arg.split("=", 1)[0]
+            if flag_name not in _KNOWN_RCLONE_FLAGS:
+                logger.error("validate_rclone_cmd: unknown flag: %s", flag_name)
+                return False
+        # Positional args (subcommand like "copy", or paths) are allowed
+        # as long as they have no shell metacharacters (checked above)
+
+    return True
+
+
 # ---- TransferManager --------------------------------------------------------
 
 
@@ -212,21 +266,46 @@ class TransferManager:
         self.state_file: str = os.path.join(self.cm_dir, "cloudhop_state.json")
         self.transfer_label: str = "Source -> Destination"
 
+        # RC API auth (generated per transfer)
+        self._rc_user: str = ""
+        self._rc_pass: str = ""
+        self._rc_port: int = 0
+
+        # Locks (initialized before _load_queue which needs state_lock)
+        self.state_lock: threading.RLock = threading.RLock()
+        self.transfer_lock: threading.Lock = threading.Lock()
+        self._scan_lock: threading.Lock = threading.Lock()
+        self._save_lock: threading.Lock = threading.Lock()
+
         # Transfer queue
         self.queue: List[Dict[str, Any]] = []
         self.queue_file: str = os.path.join(self.cm_dir, "queue.json")
         self._load_queue()
-
-        # Locks
-        self.state_lock: threading.RLock = threading.RLock()
-        self.transfer_lock: threading.Lock = threading.Lock()
-        self._scan_lock: threading.Lock = threading.Lock()
 
         # Persistent state
         self.state: Dict[str, Any] = self._load_state()
 
         # Internal flag used by scan_full_log to avoid concurrent size fetches
         self._size_fetching: bool = False
+
+        # Crash backoff tracking and transfer start time
+        self._crash_times: list = []
+        self._transfer_start_time: Optional[float] = None
+
+    # ---- helpers -------------------------------------------------------------
+
+    @staticmethod
+    def _find_free_port() -> int:
+        """Find a free TCP port in range 10000-60000."""
+        for _ in range(50):
+            port = secrets.randbelow(50000) + 10000
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                    return port
+                except OSError:
+                    continue
+        raise RuntimeError("Could not find a free port for rclone RC API")
 
     # ---- path helpers --------------------------------------------------------
 
@@ -366,18 +445,20 @@ class TransferManager:
         new_state = self._load_state()
         with self.state_lock:
             self.state = new_state
-        return self.state
+            return copy.deepcopy(self.state)
 
     def save_state(self) -> None:
         """Save persistent state to disk."""
-        with self.state_lock:
-            try:
-                tmp = self.state_file + ".tmp"
-                with open(tmp, "w") as f:
-                    json.dump(self.state, f)
-                os.replace(tmp, self.state_file)
-            except Exception as e:
-                logger.warning("Failed to save state: %s", e)
+        logger.debug("Acquiring _save_lock for state persistence")
+        with self._save_lock:
+            with self.state_lock:
+                try:
+                    tmp = self.state_file + ".tmp"
+                    with open(tmp, "w") as f:
+                        json.dump(self.state, f)
+                    os.replace(tmp, self.state_file)
+                except Exception as e:
+                    logger.warning("Failed to save state: %s", e)
 
     # ---- rclone process management -------------------------------------------
 
@@ -425,7 +506,16 @@ class TransferManager:
             # Cross-platform fallback: kill(0) probes without sending a signal
             try:
                 os.kill(pid, 0)
-                return True
+                # Verify it's actually rclone, not a recycled PID.
+                # psutil is optional -- if unavailable, assume running.
+                try:
+                    import psutil
+                    p = psutil.Process(pid)
+                    return 'rclone' in p.name().lower()
+                except ImportError:
+                    return True
+                except Exception:
+                    return True
             except (ProcessLookupError, OSError):
                 self._clear_proc()
                 return False
@@ -458,7 +548,7 @@ class TransferManager:
         with self.state_lock:
             last_offset: int = self.state.get("last_scan_offset", 0)
 
-        with open(self.log_file, "r", errors="replace") as f:
+        with open(self.log_file, "r", encoding="utf-8", errors="replace") as f:
             # Detect log truncation (rotation/restart): if the file is
             # shorter than our last offset, re-scan from the beginning.
             if last_offset > 0:
@@ -798,8 +888,13 @@ class TransferManager:
             # of cloud storage) and we must not block the log scanner or
             # the HTTP handler.  ``_size_fetching`` is a simple flag to
             # prevent spawning a second thread if the first is still running.
-            if not self._size_fetching:
-                self._size_fetching = True
+            should_start_size_fetch = False
+            with self.state_lock:
+                if not self._size_fetching:
+                    self._size_fetching = True
+                    should_start_size_fetch = True
+                    logger.debug("Size fetch flag set atomically under state_lock")
+            if should_start_size_fetch:
 
                 def _fetch_source_size() -> None:
                     try:
@@ -821,7 +916,8 @@ class TransferManager:
                     except Exception:
                         pass
                     finally:
-                        self._size_fetching = False
+                        with self.state_lock:
+                            self._size_fetching = False
 
                 threading.Thread(target=_fetch_source_size, daemon=True).start()
 
@@ -900,7 +996,7 @@ class TransferManager:
             self.state["_running_session_max_files"] = session_max_files
             self.state["_running_first_session_total"] = first_session_total
 
-            self.save_state()
+        self.save_state()
 
     # ---- parse_current and sub-functions -------------------------------------
 
@@ -1007,13 +1103,16 @@ class TransferManager:
             seen[t["name"]] = t
         return list(seen.values())
 
-    def _parse_recent_files(self) -> List[Dict[str, str]]:
+    def _parse_recent_files(self, log_file: Optional[str] = None) -> List[Dict[str, str]]:
         """Find recently copied files from the log."""
+        if log_file is None:
+            with self.state_lock:
+                log_file = self.log_file
         recent_files: List[Dict[str, str]] = []
         chunk_size = RECENT_FILES_INITIAL_CHUNK
         max_chunk = RECENT_FILES_MAX_CHUNK
         try:
-            with open(self.log_file, "rb") as f:
+            with open(log_file, "rb") as f:
                 f.seek(0, 2)
                 fsize = f.tell()
                 while chunk_size <= max_chunk and len(recent_files) < 15:
@@ -1036,11 +1135,14 @@ class TransferManager:
             return []
         return recent_files[-15:][::-1]
 
-    def _parse_error_messages(self) -> List[str]:
+    def _parse_error_messages(self, log_file: Optional[str] = None) -> List[str]:
         """Extract error messages from the log."""
+        if log_file is None:
+            with self.state_lock:
+                log_file = self.log_file
         error_msgs: List[str] = []
         try:
-            with open(self.log_file, "rb") as f:
+            with open(log_file, "rb") as f:
                 f.seek(0, 2)
                 fsize = f.tell()
                 f.seek(max(0, fsize - ERROR_TAIL_BYTES))
@@ -1075,14 +1177,17 @@ class TransferManager:
         This means the global percentage keeps climbing monotonically even
         after rclone restarts mid-transfer.
         """
-        if not os.path.exists(self.log_file):
+        with self.state_lock:
+            log_file = self.log_file
+
+        if not log_file or not os.path.exists(log_file):
             return {
                 "error": "Log file not found",
                 "rclone_running": self.is_rclone_running(),
             }
 
         # Read only the tail of the log for current-session stats (fast).
-        with open(self.log_file, "rb") as f:
+        with open(log_file, "rb") as f:
             f.seek(0, 2)
             size = f.tell()
             f.seek(max(0, size - LOG_TAIL_BYTES))
@@ -1097,22 +1202,22 @@ class TransferManager:
             lines,
         ) = self._parse_tail_stats(tail)
         result["active"] = self._parse_active_transfers(lines)
-        result["recent_files"] = self._parse_recent_files()
-        result["error_messages"] = self._parse_error_messages()
+        result["recent_files"] = self._parse_recent_files(log_file)
+        result["error_messages"] = self._parse_error_messages(log_file)
 
         # Process status
         result["finished"] = not self.is_rclone_running()
 
         # Speed/progress history from cached state (built by scan_full_log)
         with self.state_lock:
-            result["speed_history"] = self.state.get("cached_speed_history", [])
-            result["pct_history"] = self.state.get("cached_pct_history", [])
-            result["files_history"] = self.state.get("cached_files_history", [])
+            result["speed_history"] = list(self.state.get("cached_speed_history", []))
+            result["pct_history"] = list(self.state.get("cached_pct_history", []))
+            result["files_history"] = list(self.state.get("cached_files_history", []))
 
         # Combine current session stats with cumulative totals from all prior
         # sessions.
         with self.state_lock:
-            sessions = self.state.get("sessions", [])
+            sessions = copy.deepcopy(self.state.get("sessions", []))
             cumul_bytes = self.state.get("cumulative_transferred_bytes", 0)
             cumul_files = self.state.get("cumulative_files_done", 0)
             cumul_elapsed = self.state.get("cumulative_elapsed_sec", 0)
@@ -1258,7 +1363,7 @@ class TransferManager:
                     result["wall_clock"] = "--"
                     result["uptime_pct"] = 0
 
-            result["all_file_types"] = self.state.get("all_file_types", {})
+            result["all_file_types"] = dict(self.state.get("all_file_types", {}))
             result["total_copied_count"] = self.state.get("total_copied_count", 0)
             result["transfer_label"] = self.transfer_label
 
@@ -1288,7 +1393,7 @@ class TransferManager:
 
         # Grace period: avoid false "Stopped" status while rclone RC is booting
         just_started = (
-            hasattr(self, "_transfer_start_time")
+            self._transfer_start_time is not None
             and (time.time() - self._transfer_start_time) < 10
         )
         result["just_started"] = just_started
@@ -1352,12 +1457,17 @@ class TransferManager:
                 "ok": False,
                 "msg": "No transfer configured. Please set up a transfer first.",
             }
+        # Validate command loaded from state file before execution
+        if not validate_rclone_cmd(self.rclone_cmd):
+            logger.error("Resume refused: rclone_cmd failed validation: %s", self.rclone_cmd)
+            return {
+                "ok": False,
+                "msg": "Saved transfer command failed security validation. Please set up a new transfer.",
+            }
         if self.is_rclone_running():
             return {"ok": False, "msg": "rclone is already running"}
         # Crash backoff: if rclone crashed 3+ times in 5 minutes, wait before retrying
         now = time.time()
-        if not hasattr(self, "_crash_times"):
-            self._crash_times: list = []
         # Clean old entries (older than 5 minutes)
         self._crash_times = [t for t in self._crash_times if now - t < 300]
         if len(self._crash_times) >= 3:
@@ -1394,8 +1504,15 @@ class TransferManager:
         if not self.is_rclone_running():
             return {"ok": False, "msg": "rclone not running"}
         try:
+            rc_cmd = ["rclone", "rc", "core/bwlimit", f"rate={limit}"]
+            if self._rc_user and self._rc_pass and self._rc_port:
+                rc_cmd.extend([
+                    f"--rc-user={self._rc_user}",
+                    f"--rc-pass={self._rc_pass}",
+                    f"--rc-addr=127.0.0.1:{self._rc_port}",
+                ])
             result = subprocess.run(
-                ["rclone", "rc", "core/bwlimit", f"rate={limit}"],
+                rc_cmd,
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -1466,25 +1583,27 @@ class TransferManager:
 
     def _load_queue(self) -> None:
         """Load queue from disk."""
-        try:
-            with open(self.queue_file, "r") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    self.queue = data
-                else:
-                    self.queue = []
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.queue = []
+        with self.state_lock:
+            try:
+                with open(self.queue_file, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self.queue = data
+                    else:
+                        self.queue = []
+            except (FileNotFoundError, json.JSONDecodeError):
+                self.queue = []
 
     def _save_queue(self) -> None:
         """Save queue to disk."""
-        try:
-            tmp = self.queue_file + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(self.queue, f)
-            os.replace(tmp, self.queue_file)
-        except Exception:
-            pass
+        with self.state_lock:
+            try:
+                tmp = self.queue_file + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(self.queue, f)
+                os.replace(tmp, self.queue_file)
+            except Exception:
+                pass
 
     def queue_add(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """Add a transfer to the queue."""
@@ -1528,8 +1647,8 @@ class TransferManager:
 
         The queue status update is done in two phases to avoid both deadlocks
         (state_lock must be released before acquiring transfer_lock via
-        start_transfer) and TOCTOU races (item stays "queued" until the
-        transfer actually starts).
+        start_transfer) and TOCTOU races (item is marked "starting" before
+        the lock is released so other threads skip it).
         """
         if self.is_rclone_running():
             return {"ok": False, "msg": "A transfer is already running"}
@@ -1537,17 +1656,19 @@ class TransferManager:
         with self.state_lock:
             if not self.queue:
                 return {"ok": False, "msg": "Queue is empty"}
-            # Mark previously running items as completed
+            # Mark previously running/starting items as completed
             for item in self.queue:
-                if item.get("status") == "running":
+                if item.get("status") in ("running", "starting"):
                     item["status"] = "completed"
-            # Find next queued item but do NOT mark it "running" yet --
-            # wait until start_transfer succeeds to avoid permanently
-            # marking it "failed" if another transfer raced us.
+            # Find next queued item and mark it "starting" so other
+            # threads see it as in-progress and skip it.
             for item in self.queue:
                 if item.get("status") == "queued":
                     next_item = item
                     break
+            if next_item is not None:
+                next_item["status"] = "starting"
+                logger.debug("Queue item marked as starting: %s", next_item.get("source", ""))
             self._save_queue()
         if next_item is None:
             return {"ok": False, "msg": "No queued transfers"}
@@ -1557,7 +1678,7 @@ class TransferManager:
             if result.get("ok"):
                 next_item["status"] = "running"
             elif "already running" in result.get("msg", ""):
-                pass  # transient race: leave as "queued" for retry
+                next_item["status"] = "queued"  # revert for retry
             else:
                 next_item["status"] = "failed"
             self._save_queue()
@@ -1638,8 +1759,18 @@ class TransferManager:
             "--stats=10s",
             "--stats-log-level=INFO",
             "--rc",
-            "--rc-no-auth",
         ]
+
+        # Generate random RC API credentials and bind to a random port
+        self._rc_user = secrets.token_hex(16)
+        self._rc_pass = secrets.token_hex(16)
+        self._rc_port = self._find_free_port()
+        self.rclone_cmd.extend([
+            f"--rc-user={self._rc_user}",
+            f"--rc-pass={self._rc_pass}",
+            f"--rc-addr=127.0.0.1:{self._rc_port}",
+        ])
+        logger.info("RC API auth configured on port %d", self._rc_port)
 
         # Cloud-to-cloud transfers benefit from larger chunks and buffers
         if source_type not in ("local",) and dest_type not in ("local",):
@@ -1722,7 +1853,7 @@ class TransferManager:
         with self.state_lock:
             self.state["rclone_cmd"] = safe_cmd
             self.state["transfer_label"] = self.transfer_label
-            self.save_state()
+        self.save_state()
 
         try:
             popen_kwargs = {

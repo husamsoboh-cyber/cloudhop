@@ -39,10 +39,49 @@ import webbrowser
 from typing import List
 
 from .server import CloudHopHandler
-from .transfer import TransferManager, ensure_rclone
+from .transfer import TransferManager, ensure_rclone, validate_rclone_cmd
 from .utils import PORT
 
 logger = logging.getLogger("cloudhop")
+
+# Signal handling: use an event flag instead of sys.exit() to avoid deadlocks
+_shutdown_requested = threading.Event()
+
+
+def _on_signal(sig, frame):
+    """Signal-safe handler: set flag instead of calling sys.exit()."""
+    logger.info("Shutdown signal received: %s", sig)
+    _shutdown_requested.set()
+
+
+# Prefixes whose values must be masked in displayed commands
+_SENSITIVE_PREFIXES = (
+    "user=", "pass=", "password=", "username=",
+    "secret_access_key=", "access_key_id=", "2fa=",
+    "--rc-user=", "--rc-pass=",
+    "--mega-pass=", "--mega-user=",
+    "--s3-secret-access-key=", "--s3-access-key-id=",
+    "--protondrive-password=", "--protondrive-username=",
+    "--ftp-pass=", "--ftp-user=",
+    "--sftp-pass=", "--sftp-user=", "--sftp-key-file=",
+)
+
+
+def sanitize_cmd_for_display(cmd: List[str]) -> List[str]:
+    """Return a copy of *cmd* with sensitive argument values masked."""
+    safe = []
+    for arg in cmd:
+        lower = arg.lower()
+        masked = False
+        for prefix in _SENSITIVE_PREFIXES:
+            if lower.startswith(prefix) or lower.startswith(f"--{prefix}"):
+                eq = arg.index("=")
+                safe.append(arg[: eq + 1] + "***")
+                masked = True
+                break
+        if not masked:
+            safe.append(arg)
+    return safe
 
 
 def _setup_logging(cm_dir: str) -> None:
@@ -173,7 +212,7 @@ def main() -> None:
     CloudHopHandler.manager = manager
 
     logger.info("Platform: %s, Python: %s", platform.system(), sys.version.split()[0])
-    signal.signal(signal.SIGTERM, lambda signum, frame: _signal_handler(manager))
+    signal.signal(signal.SIGTERM, _on_signal)
 
     # Ignore SIGHUP so CloudHop survives terminal close (Unix only)
     if hasattr(signal, "SIGHUP"):
@@ -204,7 +243,7 @@ def main() -> None:
             start_dashboard(manager, start_rclone=False)
         else:
             print("  CloudHop - Advanced Mode")
-            print(f"  Command: {' '.join(manager.rclone_cmd)}")
+            print(f"  Command: {' '.join(sanitize_cmd_for_display(manager.rclone_cmd))}")
             start_dashboard(manager, start_rclone=True)
 
 
@@ -216,7 +255,12 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
 
     # Load RCLONE_CMD from state if not set (enables resume after restart)
     if not manager.rclone_cmd and "rclone_cmd" in manager.state:
-        manager.rclone_cmd = manager.state["rclone_cmd"]
+        cmd = manager.state["rclone_cmd"]
+        if validate_rclone_cmd(cmd):
+            manager.rclone_cmd = cmd
+        else:
+            logger.error("Saved rclone_cmd failed validation, ignoring")
+            manager.rclone_cmd = []
         # Restore LOG_FILE from the saved command
         for arg in manager.rclone_cmd:
             if arg.startswith("--log-file="):
@@ -249,9 +293,9 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
             "stderr": subprocess.DEVNULL,
         }
         if platform.system().lower() == "windows":
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            DETACHED_PROCESS = 0x00000008
-            popen_kwargs["creationflags"] = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
+            popen_kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
         else:
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(manager.rclone_cmd, **popen_kwargs)
@@ -319,7 +363,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
                 min_size=(800, 600),
             )
             webview.start()
-            _signal_handler(manager)
+            _graceful_shutdown(manager)
             return
         except ImportError:
             logger.warning("pywebview not installed, falling back to browser")
@@ -333,6 +377,14 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
         webbrowser.open(url)
     except Exception:
         pass
+    # Monitor for SIGTERM to perform graceful shutdown
+    def _shutdown_watcher():
+        _shutdown_requested.wait()
+        server.shutdown()
+
+    watcher = threading.Thread(target=_shutdown_watcher, daemon=True)
+    watcher.start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -345,7 +397,7 @@ def start_dashboard(manager: TransferManager, start_rclone: bool = False) -> Non
         print("  Run 'cloudhop' again to reconnect to the dashboard.")
         print()
         return
-    _signal_handler(manager)
+    _graceful_shutdown(manager)
 
 
 def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
@@ -410,7 +462,7 @@ def parse_cli_args(manager: TransferManager, args: List[str]) -> None:
         manager.rclone_cmd.append("--checkers=16")
 
 
-def _signal_handler(manager: TransferManager) -> None:
+def _graceful_shutdown(manager: TransferManager) -> None:
     print("\n  CloudHop stopped.")
     if manager.transfer_active:
         print("  (The file transfer continues in the background)")
