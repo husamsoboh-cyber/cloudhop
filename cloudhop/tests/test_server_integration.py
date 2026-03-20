@@ -100,25 +100,25 @@ def _fetch(req: urllib.request.Request, timeout: int = 5) -> Dict[str, Any]:
 def _fetch_raw(req: urllib.request.Request, timeout: int = 5):
     """Execute request and return (status_code, body_bytes).
 
-    Retries once on ConnectionResetError (Python's ThreadingHTTPServer can
+    Retries on ConnectionResetError (Python's ThreadingHTTPServer can
     occasionally reset connections under high concurrency).
     """
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as e:
             try:
                 return e.code, e.read()
-            except ConnectionResetError:
-                if attempt == 0:
-                    time.sleep(0.5)
+            except (ConnectionResetError, ConnectionAbortedError):
+                if attempt < 2:
+                    time.sleep(0.3)
                     req = _rebuild_request(req)
                 else:
                     raise
-        except ConnectionResetError:
-            if attempt == 0:
-                time.sleep(0.5)
+        except (ConnectionResetError, ConnectionAbortedError):
+            if attempt < 2:
+                time.sleep(0.3)
                 req = _rebuild_request(req)
             else:
                 raise
