@@ -1685,7 +1685,7 @@ class TransferManager:
         if dest_type == "protondrive" or source_type == "protondrive":
             # Override the default --checkers=16 with a safer value
             self.rclone_cmd = [
-                f"--checkers=4" if flag.startswith("--checkers=") else flag
+                "--checkers=4" if flag.startswith("--checkers=") else flag
                 for flag in self.rclone_cmd
             ]
             self.rclone_cmd.extend([
