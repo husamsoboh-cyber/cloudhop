@@ -38,6 +38,7 @@ import logging
 import os
 import secrets
 import subprocess
+import sys
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("cloudhop.server")
@@ -203,6 +204,39 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/api/status":
             self._send_json(self.manager.parse_current())
+        elif self.path == "/api/check-update":
+            from . import __version__
+
+            try:
+                import urllib.request
+
+                req = urllib.request.Request(
+                    "https://pypi.org/pypi/cloudhop/json",
+                    headers={"Accept": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                latest = data.get("info", {}).get("version", __version__)
+                is_app = getattr(sys, "_MEIPASS", None) is not None
+                self._send_json(
+                    {
+                        "current": __version__,
+                        "latest": latest,
+                        "update_available": latest != __version__,
+                        "download_url": "https://github.com/husamsoboh-cyber/cloudhop/releases/latest"
+                        if is_app
+                        else "",
+                        "pip_command": "" if is_app else "pip install --upgrade cloudhop",
+                    }
+                )
+            except Exception:
+                self._send_json(
+                    {
+                        "current": __version__,
+                        "latest": __version__,
+                        "update_available": False,
+                    }
+                )
         elif self.path == "/api/wizard/status":
             self._send_json(
                 {

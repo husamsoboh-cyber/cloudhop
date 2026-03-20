@@ -1278,3 +1278,32 @@ window.addEventListener('resize', () => {
   drawAreaChart('progressChart', progressHistory, '#22d3ee', 'progGrad', v => v.toFixed(0) + '%', true, 100);
   drawAreaChart('filesChart', filesLocalHistory, '#818cf8', 'filesGrad', fmtFilesShort, true);
 });
+
+// Auto-update check (every 30 minutes)
+(function checkForUpdates() {
+  fetch('/api/check-update').then(r => r.json()).then(d => {
+    if (d.update_available) {
+      const banner = document.getElementById('updateBanner');
+      const msg = document.getElementById('updateMsg');
+      const action = document.getElementById('updateAction');
+      if (banner && msg && action) {
+        msg.textContent = 'CloudHop ' + d.latest + ' is available (you have ' + d.current + ')';
+        if (d.download_url) {
+          action.textContent = 'Download update';
+          action.href = d.download_url;
+          action.target = '_blank';
+        } else if (d.pip_command) {
+          action.textContent = 'Update: ' + d.pip_command;
+          action.href = '#';
+          action.onclick = function(e) {
+            e.preventDefault();
+            navigator.clipboard.writeText(d.pip_command);
+            action.textContent = 'Copied to clipboard!';
+          };
+        }
+        banner.style.display = 'block';
+      }
+    }
+  }).catch(() => {});
+  setTimeout(checkForUpdates, 1800000);
+})();

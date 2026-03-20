@@ -101,6 +101,18 @@ function toggleTheme() {
       el.innerHTML = '<span style="color:var(--orange)">Required components will be installed automatically when you proceed.</span>';
     }
   }).catch(() => {});
+  // Check for updates on wizard load
+  fetch('/api/check-update').then(r => r.json()).then(d => {
+    if (d.update_available) {
+      const el = document.getElementById('welcomeRcloneCheck');
+      if (el) {
+        const link = d.download_url
+          ? '<a href="' + d.download_url + '" target="_blank" style="color:var(--blue);text-decoration:underline;">Download ' + d.latest + '</a>'
+          : '<code style="background:var(--card);padding:2px 6px;border-radius:4px;">' + d.pip_command + '</code>';
+        el.innerHTML = '<span style="color:var(--blue)">Update available: v' + d.latest + ' ' + link + '</span>';
+      }
+    }
+  }).catch(() => {});
 })();
 
 // Styled confirm modal (replaces native confirm())
