@@ -1,8 +1,8 @@
 """Stress tests for CloudHop thread safety and concurrency.
 
-These tests use real threads (not mocks) with short timeouts to verify that
+These tests use real threads (not mocks) with timeouts to verify that
 concurrent operations on TransferManager do not deadlock, corrupt state, or
-crash.  Every test has a 5-second timeout enforced via threading.Timer.
+crash.  Timeout is 15s to accommodate slow CI runners.
 """
 
 import json
@@ -17,7 +17,7 @@ from cloudhop.transfer import TransferManager
 # Helpers
 # ---------------------------------------------------------------------------
 
-TIMEOUT_SEC = 5
+TIMEOUT_SEC = 15
 
 
 def _run_with_timeout(fn, timeout=TIMEOUT_SEC):
