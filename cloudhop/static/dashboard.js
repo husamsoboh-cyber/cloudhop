@@ -1137,6 +1137,12 @@ async function exportErrorLog() {
 }
 
 async function reportError() {
+  const proceed = await showConfirmModal(
+    'This will open a page where you can describe your problem. ' +
+    'Your CloudHop version and recent error messages will be included (no personal files or paths). ' +
+    'You will be able to review everything before sending.'
+  );
+  if (!proceed) return;
   try {
     const res = await fetch('/api/error-log');
     const d = await res.json();
@@ -1148,7 +1154,7 @@ async function reportError() {
       '- Platform: ' + d.platform + '\n' +
       '- Python: ' + d.python + '\n\n' +
       '## What happened?\n' +
-      '_Describe what you were doing when the error occurred._\n\n' +
+      '_Please describe what you were doing when the error occurred._\n\n' +
       '## Recent errors\n' +
       '```\n' + (lastErrors || 'No errors found') + '\n```\n'
     );

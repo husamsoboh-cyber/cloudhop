@@ -245,14 +245,25 @@
 
 <!-- ========== ERRORS ========== -->
 <div class="error-section" id="errorSection">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-    <h3 style="margin-bottom:0;">Errors</h3>
-    <div style="display:flex;gap:6px;">
-      <button onclick="exportErrorLog()" class="ctrl-btn" style="padding:4px 10px;font-size:0.7rem;">Export Logs</button>
-      <button onclick="reportError()" class="ctrl-btn" style="padding:4px 10px;font-size:0.7rem;color:var(--primary);border-color:rgba(var(--primary-rgb),0.3);">Report Bug</button>
+  <h3>Errors</h3>
+  <div id="errorList"></div>
+  <div style="margin-top:12px;padding:12px 16px;background:rgba(var(--primary-rgb),0.05);border:1px solid rgba(var(--primary-rgb),0.1);border-radius:10px;">
+    <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:10px;">Need help with these errors? You have two options:</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button onclick="reportError()" class="ctrl-btn" style="padding:6px 14px;font-size:0.75rem;color:var(--primary);border-color:rgba(var(--primary-rgb),0.3);">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        Ask for help (opens GitHub)
+      </button>
+      <button onclick="exportErrorLog()" class="ctrl-btn" style="padding:6px 14px;font-size:0.75rem;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Save error log to your computer
+      </button>
+    </div>
+    <div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:8px;">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Your privacy is protected. No data is sent automatically. File paths are anonymized before sharing.
     </div>
   </div>
-  <div id="errorList"></div>
 </div>
 
 <!-- ========== ACTIVE TRANSFERS ========== -->
