@@ -59,15 +59,16 @@ function handleDrop(event, inputId) {
     // Regular browser - can't get full path from drag & drop
     const name = file.name || '';
     if (!name) return;
-    const errorId = inputId === 'sourcePathInput' ? 'sourcePathError' : 'destPathError';
-    if (file.type || file.size > 0) {
-      // Likely a file, not a folder
-      const el = document.getElementById(errorId);
-      if (el) { el.textContent = 'Please drop a folder, not a file.'; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 5000); }
-    } else {
-      input.placeholder = 'Type the full path to "' + name + '"';
-      input.focus();
+    const hintId = inputId === 'sourcePathInput' ? 'sourcePathError' : 'destPathError';
+    const el = document.getElementById(hintId);
+    // Show helpful hint (not an error) for both files and folders
+    input.placeholder = 'Type the full path to "' + name + '"';
+    if (el) {
+      el.textContent = 'Drag & drop in browser can\'t detect full paths. Please type the path or use Browse below.';
+      el.style.color = 'var(--text-dim)';
+      el.style.display = 'block';
     }
+    input.focus();
   }
 }
 
