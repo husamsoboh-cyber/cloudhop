@@ -1,5 +1,6 @@
 """Tests for cloudhop.email_notify module."""
 
+import smtplib
 from unittest.mock import MagicMock, patch
 
 from cloudhop.email_notify import build_completion_email, send_email
@@ -64,6 +65,17 @@ class TestSendEmail:
         result = send_email("Test", "<p>Hello</p>", _base_settings(email_smtp_host=""))
         assert result is False
 
+    def test_send_email_login_failure_calls_quit(self):
+        with patch("cloudhop.email_notify.smtplib.SMTP") as mock_smtp_cls:
+            mock_smtp = MagicMock()
+            mock_smtp_cls.return_value = mock_smtp
+            mock_smtp.login.side_effect = smtplib.SMTPAuthenticationError(535, b"Auth failed")
+
+            result = send_email("Test", "<p>Hello</p>", _base_settings())
+
+            assert result is False
+            mock_smtp.quit.assert_called_once()
+
     def test_send_email_no_password_still_works(self):
         with patch("cloudhop.email_notify.smtplib.SMTP") as mock_smtp_cls:
             mock_smtp = MagicMock()
@@ -110,3 +122,17 @@ class TestBuildCompletionEmail:
         assert "#ef4444" in body
         assert "File not found" in body
         assert "Permission denied" in body
+
+    def test_build_completion_email_escapes_html(self):
+        status = {
+            "global_files_done": 1,
+            "global_transferred": "10 MiB",
+            "global_pct": 50,
+            "global_elapsed": "1m",
+            "errors": 1,
+            "error_messages": ["<script>alert(1)</script>"],
+        }
+        _, body = build_completion_email(status, "0.12.0")
+
+        assert "&lt;script&gt;" in body
+        assert "<script>alert(1)</script>" not in body

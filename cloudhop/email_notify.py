@@ -3,6 +3,7 @@
 import logging
 import smtplib
 from email.mime.text import MIMEText
+from html import escape
 
 logger = logging.getLogger("cloudhop.email_notify")
 
@@ -21,6 +22,11 @@ def send_email(subject: str, body_html: str, settings: dict) -> bool:
         logger.warning("Email not sent: missing host, from, or to address")
         return False
 
+    for field_val, field_name in ((email_from, "from"), (email_to, "to"), (subject, "subject")):
+        if "\r" in field_val or "\n" in field_val:
+            logger.warning("Rejected email field with CRLF characters: %s", field_name)
+            return False
+
     msg = MIMEText(body_html, "html")
     msg["Subject"] = subject
     msg["From"] = email_from
@@ -33,12 +39,15 @@ def send_email(subject: str, body_html: str, settings: dict) -> bool:
             smtp = smtplib.SMTP(host, port, timeout=30)
             if use_tls:
                 smtp.starttls()
-
-        if username:
-            smtp.login(username, password)
-
-        smtp.sendmail(email_from, [email_to], msg.as_string())
-        smtp.quit()
+        try:
+            if username:
+                smtp.login(username, password)
+            smtp.sendmail(email_from, [email_to], msg.as_string())
+        finally:
+            try:
+                smtp.quit()
+            except Exception:
+                pass
         logger.info("Email sent to %s (subject: %s)", email_to, subject)
         return True
     except Exception:
@@ -66,7 +75,9 @@ def build_completion_email(status: dict, version: str) -> tuple:
 
     error_section = ""
     if errors > 0 and error_messages:
-        items = "".join(f"<li style='margin-bottom:4px;'>{msg}</li>" for msg in error_messages[:5])
+        items = "".join(
+            f"<li style='margin-bottom:4px;'>{escape(msg)}</li>" for msg in error_messages[:5]
+        )
         error_section = (
             "<div style='margin-top:16px;'>"
             "<strong style='color:#ef4444;'>Errors:</strong>"

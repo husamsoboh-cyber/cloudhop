@@ -39,7 +39,8 @@ def _load() -> List[Dict[str, Any]]:
 def _save(presets: List[Dict[str, Any]]) -> None:
     """Write presets to disk atomically."""
     tmp = _PRESETS_FILE + ".tmp"
-    with open(tmp, "w") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(presets, f, indent=2)
     os.replace(tmp, _PRESETS_FILE)
 
