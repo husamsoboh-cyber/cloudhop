@@ -1125,8 +1125,6 @@ class TestCrashBackoff:
         mock_popen.return_value = mock_proc
         manager.rclone_cmd = ["rclone", "copy", "a:", "b:"]
 
-        import time
-
         manager._crash_times = [time.time() - 10, time.time() - 5, time.time() - 1]
         result = manager.resume()
         assert result["ok"] is False
@@ -1140,8 +1138,6 @@ class TestCrashBackoff:
         mock_proc.pid = 2222
         mock_popen.return_value = mock_proc
         manager.rclone_cmd = ["rclone", "copy", "a:", "b:"]
-
-        import time
 
         manager._crash_times = [time.time() - 400, time.time() - 350, time.time() - 310]
         result = manager.resume()

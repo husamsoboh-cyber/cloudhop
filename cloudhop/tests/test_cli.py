@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cloudhop.cli import _cli_subcommand, start_dashboard
-from cloudhop.transfer import install_rclone, ensure_rclone, find_rclone
+from cloudhop.transfer import ensure_rclone, install_rclone
 
 
 def _mock_api_response(data, cookies=""):

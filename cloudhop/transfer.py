@@ -312,6 +312,14 @@ class TransferManager:
         self._crash_times: list = []
         self._transfer_start_time: Optional[float] = None
 
+        # ETA smoothing (exponential moving average)
+        self._speed_ema: float = 0.0
+        self._ema_alpha: float = 0.3
+
+        # Completion notification tracking
+        self._completion_notified: bool = False
+        self._rate_limited: bool = False
+
     # ---- helpers -------------------------------------------------------------
 
     @staticmethod
@@ -1162,6 +1170,7 @@ class TransferManager:
             with self.state_lock:
                 log_file = self.log_file
         error_msgs: List[str] = []
+        self._rate_limited = False
         try:
             with open(log_file, "rb") as f:
                 f.seek(0, 2)
@@ -1170,13 +1179,31 @@ class TransferManager:
                 err_tail = f.read().decode("utf-8", errors="replace")
         except (FileNotFoundError, PermissionError):
             return []
+        rate_limit_count = 0
         for line in err_tail.split("\n"):
             if "ERROR" in line and "Errors:" not in line:
                 m = RE_ERROR_MSG.search(line)
                 if m:
                     msg = m.group(1).strip()
+                    msg_lower = msg.lower()
+                    if (
+                        "429" in msg
+                        or "rate limit" in msg_lower
+                        or "too many requests" in msg_lower
+                        or "retry after" in msg_lower
+                    ):
+                        rate_limit_count += 1
+                        self._rate_limited = True
+                        continue
                     if msg not in error_msgs:
                         error_msgs.append(msg)
+        if self._rate_limited:
+            summary = (
+                f"Rate limited by provider ({rate_limit_count} occurrences). "
+                "Speed automatically reduced."
+            )
+            error_msgs.insert(0, summary)
+            logger.warning("Rate limit detected (%d occurrences)", rate_limit_count)
         return error_msgs[-5:]
 
     def parse_current(self) -> Dict[str, Any]:
@@ -1225,6 +1252,7 @@ class TransferManager:
         result["active"] = self._parse_active_transfers(lines)
         result["recent_files"] = self._parse_recent_files(log_file)
         result["error_messages"] = self._parse_error_messages(log_file)
+        result["rate_limited"] = self._rate_limited
 
         # Process status
         result["finished"] = not self.is_rclone_running()
@@ -1272,6 +1300,12 @@ class TransferManager:
 
             if global_files_total > 0 and global_files_done > global_files_total:
                 global_files_done = global_files_total
+
+            # A3: At completion, force file total = files done to fix
+            # off-by-one from .DS_Store/.localized/._* exclusion
+            if result["finished"] and global_files_done > 0:
+                if global_files_done >= global_files_total - 5:
+                    global_files_total = global_files_done
 
             session_elapsed_sec = parse_elapsed(result.get("session_elapsed", ""))
             global_elapsed_sec = cumul_elapsed + session_elapsed_sec
@@ -1423,6 +1457,35 @@ class TransferManager:
                     result["bw_limit"] = bw_val
                     break
 
+        # B1: ETA smoothing via exponential moving average
+        raw_speed = result.get("speed")
+        if raw_speed and not result.get("finished"):
+            sm = RE_SPEED.match(raw_speed)
+            if sm:
+                v = float(sm.group(1))
+                u = sm.group(2).upper()
+                if u.startswith("K"):
+                    v /= 1024
+                elif u.startswith("G"):
+                    v *= 1024
+                speed_bytes_per_sec = v * 1024 * 1024
+                if speed_bytes_per_sec > 0:
+                    if self._speed_ema == 0:
+                        self._speed_ema = speed_bytes_per_sec
+                    else:
+                        self._speed_ema = (
+                            self._ema_alpha * speed_bytes_per_sec
+                            + (1 - self._ema_alpha) * self._speed_ema
+                        )
+                    remaining = result.get("global_total_bytes", 0) - result.get(
+                        "global_transferred_bytes", 0
+                    )
+                    if remaining > 0 and self._speed_ema > 0:
+                        smoothed_eta_sec = remaining / self._speed_ema
+                        result["smoothed_eta"] = fmt_duration(smoothed_eta_sec)
+                        result["smoothed_eta_sec"] = smoothed_eta_sec
+                    result["smoothed_speed"] = fmt_bytes(self._speed_ema) + "/s"
+
         # Grace period: avoid false "Stopped" status while rclone RC is booting
         just_started = (
             self._transfer_start_time is not None and (time.time() - self._transfer_start_time) < 10
@@ -1461,6 +1524,7 @@ class TransferManager:
                 os.kill(pid, signal.SIGTERM)
             with self.state_lock:
                 self._clear_proc()
+            self._completion_notified = True  # Don't notify on user-initiated pause
             time.sleep(1)
             self.scan_full_log()
             return {"ok": True, "msg": f"Stopped rclone (PID {pid})"}
@@ -1497,6 +1561,7 @@ class TransferManager:
             }
         if self.is_rclone_running():
             return {"ok": False, "msg": "rclone is already running"}
+        self._completion_notified = False
         # Crash backoff: if rclone crashed 3+ times in 5 minutes, wait before retrying
         now = time.time()
         # Clean old entries (older than 5 minutes)
@@ -1748,6 +1813,8 @@ class TransferManager:
     def _start_transfer_locked(self, body: Dict[str, Any]) -> Dict[str, Any]:
         if self.transfer_active or self.is_rclone_running():
             return {"ok": False, "msg": "A transfer is already running"}
+        self._completion_notified = False
+        self._speed_ema = 0.0
 
         source: str = body.get("source", "")
         dest: str = body.get("dest", "")
@@ -2189,6 +2256,32 @@ class TransferManager:
                 self.scan_full_log()
                 self._check_schedule()
                 self._check_battery()
+                # A4: Notify on transfer completion
+                if (
+                    not self.is_rclone_running()
+                    and self.rclone_cmd
+                    and not self._completion_notified
+                ):
+                    self._completion_notified = True
+                    try:
+                        from .notify import notify
+
+                        status = self.parse_current()
+                        files = status.get("global_files_done", 0)
+                        size = status.get("global_transferred", "")
+                        pct = status.get("global_pct", 0)
+                        if pct >= 99:
+                            notify(
+                                "CloudHop",
+                                f"Transfer complete! {files} files ({size}) transferred.",
+                            )
+                        elif files > 0:
+                            notify(
+                                "CloudHop",
+                                "Transfer failed. Check dashboard for details.",
+                            )
+                    except Exception:
+                        pass
                 # Auto-process queue when current transfer finishes
                 if not self.is_rclone_running() and self.queue:
                     self.queue_process_next()

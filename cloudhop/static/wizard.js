@@ -895,27 +895,44 @@ function getDestPath() {
   return destName + ':' + (dstSub || '');
 }
 
+function truncatePath(path, maxLen) {
+  if (!path || path.length <= maxLen) return path;
+  const half = Math.floor(maxLen / 2) - 2;
+  return path.substring(0, half) + '...' + path.substring(path.length - half);
+}
+
 async function previewTransfer() {
   const btn = document.getElementById('previewBtn');
   btn.disabled = true;
   btn.textContent = 'Scanning...';
   const result = document.getElementById('previewResult');
+  result.style.display = 'block';
+  result.innerHTML = '<div class="spinner" style="display:inline-block;margin-right:8px;vertical-align:middle;"></div> Calculating size...';
+  const srcPath = getSourcePath();
   try {
     const resp = await fetch('/api/wizard/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-      body: JSON.stringify({source: getSourcePath(), dest: getDestPath(), source_type: sourceProvider, dest_type: destProvider})
+      body: JSON.stringify({source: srcPath, dest: getDestPath(), source_type: sourceProvider, dest_type: destProvider})
     });
     const data = await resp.json();
     if (data.ok) {
-      result.style.display = 'block';
-      result.innerHTML = '<strong>' + esc(data.count.toLocaleString()) + ' files</strong> (' + esc(data.size) + ') will be copied.';
+      const pathDisplay = srcPath ? truncatePath(srcPath, 60) : '';
+      let html = '<div style="margin-bottom:6px;"><strong>Ready to transfer: '
+        + esc(data.count.toLocaleString()) + ' files</strong> (' + esc(data.size) + ')</div>';
+      if (pathDisplay) {
+        html += '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px;">Source: ' + esc(pathDisplay) + '</div>';
+      }
+      if (data.estimated_duration) {
+        html += '<div style="font-size:0.75rem;color:var(--text-dim);">Estimated time: '
+          + esc(data.estimated_duration)
+          + '<br><span style="font-size:0.7rem;opacity:0.7;">Actual time depends on network speed</span></div>';
+      }
+      result.innerHTML = html;
     } else {
-      result.style.display = 'block';
       result.innerHTML = 'Could not preview: ' + esc(data.msg || 'unknown error');
     }
   } catch(e) {
-    result.style.display = 'block';
     result.innerHTML = 'Preview failed. You can still start the transfer.';
   }
   btn.disabled = false;

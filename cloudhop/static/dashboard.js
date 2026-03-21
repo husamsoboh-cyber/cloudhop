@@ -98,6 +98,8 @@ function stopPolling() {
 
 let peakSpeedVal = 0;
 let peakSpeedTime = '';
+let lastEtaUpdate = 0;
+let lastEtaValue = 0;
 
 function parseSpeed(str) {
   if (!str) return 0;
@@ -917,21 +919,61 @@ async function refresh() {
 
     document.title = (pct > 0 && pct < 100) ? '[' + Math.round(pct) + '%] CloudHop' : 'CloudHop';
 
-    // Smoothed ETA based on average speed
+    // Smoothed ETA based on backend EMA or average speed
     if (pct >= 100) {
         document.getElementById('bpEta').textContent = 'Complete';
         document.getElementById('finishTime').textContent = '';
+    } else if (d.smoothed_eta_sec && d.smoothed_eta_sec > 0) {
+        // B1: Use backend-smoothed ETA with frontend throttling
+        const now = Date.now();
+        let etaSec = d.smoothed_eta_sec;
+        if (lastEtaValue > 0 && now - lastEtaUpdate < 10000) {
+            // Don't update ETA more than once per 10 seconds
+        } else {
+            // Clamp: max 20% shift per update
+            if (lastEtaValue > 0) {
+                const maxShift = lastEtaValue * 0.2;
+                const diff = etaSec - lastEtaValue;
+                if (Math.abs(diff) > maxShift) {
+                    etaSec = lastEtaValue + (diff > 0 ? maxShift : -maxShift);
+                }
+            }
+            lastEtaValue = etaSec;
+            lastEtaUpdate = now;
+            document.getElementById('bpEta').textContent = fmtDuration(etaSec);
+            const finish = new Date(Date.now() + etaSec * 1000);
+            document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}) + ', ' + finish.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
+        }
     } else if (d.global_transferred_bytes > 0 && d.global_total_bytes > 0 && d.global_elapsed_sec > 0) {
+        // Fallback: average speed ETA
         const avgBps = d.global_transferred_bytes / d.global_elapsed_sec;
         const remaining = d.global_total_bytes - d.global_transferred_bytes;
         if (avgBps > 0 && remaining > 0) {
             const etaSec = remaining / avgBps;
-            const etaStr = fmtDuration(etaSec);
-            document.getElementById('bpEta').textContent = etaStr;
-            // Finish time
+            document.getElementById('bpEta').textContent = fmtDuration(etaSec);
             const finish = new Date(Date.now() + etaSec * 1000);
             document.getElementById('finishTime').textContent = 'Finish: ' + finish.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}) + ', ' + finish.toLocaleTimeString(undefined, {hour:'2-digit', minute:'2-digit'});
         }
+    }
+
+    // B3: Rate limit banner
+    const rlBanner = document.getElementById('rateLimitBanner');
+    if (d.rate_limited === true) {
+        if (!rlBanner) {
+            const banner = document.createElement('div');
+            banner.id = 'rateLimitBanner';
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:10px 20px;background:rgba(245,158,11,0.15);border-bottom:1px solid rgba(245,158,11,0.3);color:var(--orange);text-align:center;font-size:0.85rem;font-weight:600;z-index:999;';
+            banner.textContent = 'Transfer speed reduced due to provider rate limiting';
+            document.body.prepend(banner);
+            document.body.style.paddingTop = '44px';
+            const hdr = document.querySelector('.header');
+            if (hdr) hdr.style.top = '44px';
+        }
+    } else if (rlBanner) {
+        rlBanner.remove();
+        document.body.style.paddingTop = '';
+        const hdr = document.querySelector('.header');
+        if (hdr) hdr.style.top = '0';
     }
 
     // Daily transfer bar chart
