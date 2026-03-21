@@ -110,6 +110,10 @@ let existingRemotes = [];
 // Multi-select state
 let multiSelectedPaths = [];  // [{path, name, isFolder}]
 
+// Multi-destination state
+let multiDestinations = [];  // [{provider, name, displayName, path, subfolder}]
+const MAX_DESTINATIONS = 5;
+
 const providerKeys = {
   drive: 'gdrive', onedrive: 'onedrive', dropbox: 'dropbox', mega: 'mega', s3: 's3', protondrive: 'protondrive', local: 'local', icloud: 'local', other: null
 };
@@ -527,6 +531,11 @@ function selectDest(card) {
   } else {
     document.getElementById('destNext').disabled = false;
   }
+  // Show "Add another destination" button when a dest is selected
+  const addBtn = document.getElementById('addDestBtn');
+  if (addBtn && (multiDestinations.length + (destProvider ? 1 : 0)) < MAX_DESTINATIONS) {
+    addBtn.style.display = 'inline-flex';
+  }
 }
 
 function updateDestGrid() {
@@ -542,6 +551,101 @@ function updateDestGrid() {
       c.appendChild(span);
     }
   });
+}
+
+// ── Multi-destination helpers ────────────────────────────────────────
+function addCurrentDestToMulti() {
+  if (!destProvider) return;
+  if (multiDestinations.length >= MAX_DESTINATIONS) return;
+  const sub = (document.getElementById('destSubfolder') || {}).value || '';
+  let path;
+  if (destProvider === 'local' || destProvider === 'icloud') {
+    path = (document.getElementById('destPathInput') || {}).value || '';
+  } else if (destProvider === 'other') {
+    const n = (document.getElementById('destOtherInput') || {}).value || '';
+    path = n + ':' + sub;
+  } else {
+    path = destName + ':' + sub;
+  }
+  multiDestinations.push({
+    provider: destProvider,
+    name: destName,
+    displayName: destDisplayName,
+    path: path,
+    subfolder: sub,
+  });
+  renderMultiDestList();
+}
+
+function removeMultiDest(idx) {
+  multiDestinations.splice(idx, 1);
+  renderMultiDestList();
+}
+
+function renderMultiDestList() {
+  const container = document.getElementById('multiDestList');
+  if (!container) return;
+  if (multiDestinations.length === 0) {
+    container.style.display = 'none';
+    const btn = document.getElementById('addDestBtn');
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+  const btn = document.getElementById('addDestBtn');
+  if (btn) btn.style.display = multiDestinations.length < MAX_DESTINATIONS ? 'inline-flex' : 'none';
+  let html = '<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:8px;">' + multiDestinations.length + ' destination' + (multiDestinations.length > 1 ? 's' : '') + ' selected</div>';
+  multiDestinations.forEach((d, i) => {
+    const icon = providerIcons[d.provider] || providerIcons.other;
+    const label = d.displayName + (d.subfolder ? ' / ' + d.subfolder : '');
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--card-border);border-radius:8px;margin-bottom:6px;">'
+      + '<span style="flex-shrink:0;">' + icon + '</span>'
+      + '<span style="flex:1;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(label) + '">' + esc(label) + '</span>'
+      + '<button type="button" onclick="removeMultiDest(' + i + ')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1.1rem;padding:4px 8px;line-height:1;" title="Remove">&times;</button>'
+      + '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function onAddAnotherDest() {
+  // Save current dest selection into the multi-dest list
+  if (!destProvider) return;
+  addCurrentDestToMulti();
+  // Reset the dest selection UI for a new pick
+  document.querySelectorAll('#destGrid .provider-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('destLocalPath').classList.remove('show');
+  document.getElementById('destOtherName').classList.remove('show');
+  document.getElementById('destNext').disabled = true;
+  destProvider = null;
+  destName = '';
+  destDisplayName = '';
+  if (document.getElementById('destPathInput')) document.getElementById('destPathInput').value = '';
+  if (document.getElementById('destOtherInput')) document.getElementById('destOtherInput').value = '';
+  if (document.getElementById('destSubfolder')) document.getElementById('destSubfolder').value = '';
+}
+
+function getMultiDestPaths() {
+  // Build the final list of destinations for the API
+  const dests = multiDestinations.map(d => ({remote: d.provider === 'icloud' ? 'local' : d.provider, path: d.path}));
+  // Also include current dest if selected (the "last" one not yet added)
+  if (destProvider) {
+    const sub = (document.getElementById('destSubfolder') || {}).value || '';
+    let path;
+    if (destProvider === 'local' || destProvider === 'icloud') {
+      path = (document.getElementById('destPathInput') || {}).value || '';
+    } else if (destProvider === 'other') {
+      const n = (document.getElementById('destOtherInput') || {}).value || '';
+      path = n + ':' + sub;
+    } else {
+      path = destName + ':' + sub;
+    }
+    dests.push({remote: destProvider === 'icloud' ? 'local' : destProvider, path: path});
+  }
+  return dests;
+}
+
+function isMultiDest() {
+  return multiDestinations.length > 0;
 }
 
 function selectSpeed(card, val) {
@@ -619,6 +723,17 @@ async function buildConnectStep() {
   if (destProvider && destProvider !== 'local' && destProvider !== 'icloud' && destProvider !== 'other') {
     items.push({provider: destProvider, name: destName, display: destDisplayName, role: 'dest'});
   }
+  // Include additional multi-dest providers
+  const seenProviders = new Set(items.map(i => i.name));
+  multiDestinations.forEach(d => {
+    if (d.provider && d.provider !== 'local' && d.provider !== 'icloud' && d.provider !== 'other') {
+      const rName = providerKeys[d.provider] || d.provider;
+      if (!seenProviders.has(rName)) {
+        seenProviders.add(rName);
+        items.push({provider: d.provider, name: rName, display: d.displayName, role: 'dest'});
+      }
+    }
+  });
 
   if (items.length === 0) {
     list.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No cloud accounts need to be connected. You\'re all set!</div>';
@@ -878,12 +993,29 @@ function buildSummary() {
 
   const modeColor = selectedMode === 'sync' ? 'var(--orange)' : selectedMode === 'bisync' ? 'var(--blue)' : 'var(--green)';
 
-  card.innerHTML = `
-    ${sourceRows}
-    <div class="summary-row">
+  const allDests = getMultiDestPaths();
+  const isMultiDest = allDests.length > 1;
+  let destRows = '';
+  if (isMultiDest) {
+    destRows = '<div class="summary-row"><span class="summary-label">Destinations (' + allDests.length + ')</span><span class="summary-value" style="display:flex;flex-direction:column;gap:2px;">';
+    const allDestsDisplay = [...multiDestinations];
+    if (destProvider) allDestsDisplay.push({provider: destProvider, displayName: destDisplayName, subfolder: (document.getElementById('destSubfolder') || {}).value || '', path: ''});
+    allDestsDisplay.forEach(d => {
+      const icon = providerIcons[d.provider] || providerIcons.other;
+      const label = d.displayName + (d.subfolder ? ' / ' + d.subfolder : '');
+      destRows += '<span style="font-size:0.8rem;display:flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(label) + '">' + icon + ' ' + esc(label) + '</span>';
+    });
+    destRows += '</span></div>';
+  } else {
+    destRows = `<div class="summary-row">
       <span class="summary-label">Destination</span>
       <span class="summary-value" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(dstDisplay)}">${esc(dstDisplay)}</span>
-    </div>
+    </div>`;
+  }
+
+  card.innerHTML = `
+    ${sourceRows}
+    ${destRows}
     <div class="summary-row">
       <span class="summary-label">Mode</span>
       <span class="summary-value" style="color:${modeColor};font-weight:700;">${esc(modeLabels[selectedMode] || 'Copy')}</span>
@@ -912,6 +1044,9 @@ function buildSummary() {
   if (isMulti) {
     card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:8px;font-size:0.75rem;color:var(--text-dim);">Each source will be transferred sequentially via the queue.</div>';
   }
+  if (isMultiDest) {
+    card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:8px;font-size:0.75rem;color:var(--text-dim);">1 source &#8594; ' + allDests.length + ' destinations. Each destination will be transferred sequentially. Total estimated time: sum of individual transfers.</div>';
+  }
 
   // Add schedule info if enabled
   const schedEl = document.getElementById('scheduleEnabled');
@@ -937,7 +1072,7 @@ function buildSummary() {
   // Update button text for multi-select
   const startBtn = document.getElementById('startBtn');
   if (startBtn) {
-    startBtn.textContent = isMulti ? 'Start All' : 'Start Transfer';
+    startBtn.textContent = (isMulti || isMultiDest) ? 'Start All' : 'Start Transfer';
   }
 }
 
@@ -1072,7 +1207,7 @@ async function startTransfer() {
   const safetyTimeout = setTimeout(() => {
     startTransfer._running = false;
     btn.disabled = false;
-    btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
+    btn.textContent = (multiSelectedPaths.length > 1 || isMultiDest()) ? 'Start All' : 'Start Transfer';
     showWizardError('Transfer may have started. Check the dashboard.');
   }, 30000);
 
@@ -1092,9 +1227,43 @@ async function startTransfer() {
       }
     }
     const isMulti = multiSelectedPaths.length > 1;
+    const allDests = getMultiDestPaths();
+    const isMultiDestTransfer = allDests.length > 1;
     const dst = getDestPath();
 
-    if (isMulti) {
+    if (isMultiDestTransfer && !isMulti) {
+      // Multi-destination: single source -> multiple destinations
+      const src = getSourcePath();
+      if (!src) {
+        showWizardError('Please select a source folder.');
+        clearTimeout(safetyTimeout);
+        startTransfer._running = false;
+        btn.disabled = false;
+        btn.textContent = 'Start All';
+        return;
+      }
+      const resp = await fetch('/api/wizard/start-multi-dest', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        body: JSON.stringify({
+          source: src,
+          destinations: allDests,
+          transfers: selectedSpeed,
+          excludes: excludeList,
+          source_type: sourceProvider === 'icloud' ? 'local' : sourceProvider,
+          bw_limit: document.getElementById('bwLimit').value.trim(),
+          checksum: document.getElementById('useChecksum').checked,
+          fast_list: document.getElementById('useFastList').checked,
+          mode: selectedMode
+        })
+      });
+      clearTimeout(safetyTimeout);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error('HTTP ' + resp.status + ': ' + errText);
+      }
+      var data = await resp.json();
+    } else if (isMulti) {
       // Multi-select: build full paths
       const paths = multiSelectedPaths.map(s => _getMultiSelectFullPath(s.path));
       if (!dst) {
@@ -1190,7 +1359,7 @@ async function startTransfer() {
       console.error('startTransfer: server returned error:', data.msg);
       startTransfer._running = false;
       btn.disabled = false;
-      btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
+      btn.textContent = (multiSelectedPaths.length > 1 || isMultiDest()) ? 'Start All' : 'Start Transfer';
       showWizardError('Error: ' + (data.msg || 'Failed to start transfer'));
     }
   } catch(e) {
@@ -1198,7 +1367,7 @@ async function startTransfer() {
     clearTimeout(safetyTimeout);
     startTransfer._running = false;
     btn.disabled = false;
-    btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
+    btn.textContent = (multiSelectedPaths.length > 1 || isMultiDest()) ? 'Start All' : 'Start Transfer';
     showWizardError('Error starting transfer: ' + (e.message || 'Unknown error'));
   }
 }

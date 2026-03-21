@@ -200,6 +200,10 @@
         <div class="form-hint">For cloud services not listed above. Enter a short name for your account (e.g. "backblaze", "wasabi", "pcloud").</div>
       </div>
     </div>
+    <div id="multiDestList" style="display:none;margin-top:16px;"></div>
+    <button type="button" class="btn btn-secondary" id="addDestBtn" onclick="onAddAnotherDest()" style="display:none;margin-top:10px;padding:8px 16px;border-radius:8px;font-size:0.8rem;gap:4px;align-items:center;">
+      + Add another destination
+    </button>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="goTo(2)">Back</button>
       <button class="btn btn-primary" id="destNext" onclick="goTo(4)" disabled>Next</button>

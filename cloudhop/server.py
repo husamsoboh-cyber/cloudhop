@@ -18,6 +18,7 @@ POST /api/wizard/configure-remote  Create an rclone remote (OAuth or credentials
 POST /api/wizard/check-remote      Poll whether a remote is now configured (OAuth flow)
 POST /api/wizard/preview      Run ``rclone size`` to estimate transfer scope
 POST /api/wizard/start        Validate inputs, build rclone command, launch subprocess
+POST /api/wizard/start-multi-dest  Copy one source to multiple destinations via queue
 
 Security model
 --------------
@@ -1099,6 +1100,75 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 logger.error("Multi-select: first transfer failed: %s", result.get("msg"))
             result["queued"] = queue_ids
             result["total_paths"] = len(paths)
+            self._send_json(result)
+        elif self.path == "/api/wizard/start-multi-dest":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            source = body.get("source", "")
+            destinations = body.get("destinations", [])
+            if not source:
+                self._send_json({"ok": False, "msg": "Missing source"}, 400)
+                return
+            if not isinstance(destinations, list) or not destinations:
+                self._send_json({"ok": False, "msg": "No destinations provided"}, 400)
+                return
+            if len(destinations) > 5:
+                self._send_json({"ok": False, "msg": "Too many destinations (max 5)"}, 400)
+                return
+            transfers = body.get("transfers", "8")
+            excludes = body.get("excludes", [])
+            source_type = body.get("source_type", "")
+            bw_limit = body.get("bw_limit", "")
+            checksum = body.get("checksum", False)
+            fast_list = body.get("fast_list", False)
+            mode = body.get("mode", "copy")
+            # First destination starts immediately, rest go to queue
+            first_dest = destinations[0]
+            first_body = {
+                "source": source,
+                "dest": first_dest.get("path", ""),
+                "transfers": transfers,
+                "excludes": excludes,
+                "source_type": source_type,
+                "dest_type": first_dest.get("remote", ""),
+                "bw_limit": bw_limit,
+                "checksum": checksum,
+                "fast_list": fast_list,
+                "mode": mode,
+            }
+            logger.info(
+                "Multi-dest: %d destinations for source %s",
+                len(destinations),
+                source,
+            )
+            result = self.manager.start_transfer(first_body)
+            queue_ids = []
+            for d in destinations[1:]:
+                q_body = {
+                    "source": source,
+                    "dest": d.get("path", ""),
+                    "source_type": source_type,
+                    "dest_type": d.get("remote", ""),
+                    "transfers": transfers,
+                    "excludes": excludes,
+                    "bw_limit": bw_limit,
+                    "mode": mode,
+                }
+                qr = self.manager.queue_add(q_body)
+                if qr.get("ok"):
+                    queue_ids.append(qr["queue_id"])
+            if result.get("ok"):
+                logger.info(
+                    "Multi-dest: first transfer started (PID %s), %d queued",
+                    result.get("pid"),
+                    len(queue_ids),
+                )
+            else:
+                logger.error("Multi-dest: first transfer failed: %s", result.get("msg"))
+            result["queued"] = queue_ids
+            result["total_destinations"] = len(destinations)
             self._send_json(result)
         elif self.path == "/api/bwlimit":
             body = self._read_body()
