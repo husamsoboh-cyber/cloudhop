@@ -406,7 +406,7 @@ function showCompletionScreen(d) {
                 </div>
             </div>
             <div style="display:flex;gap:12px;justify-content:center;margin-bottom:28px;">
-                <a href="/wizard" style="padding:12px 24px;border-radius:10px;background:linear-gradient(135deg,var(--primary),var(--secondary));color:#fff;text-decoration:none;font-weight:600;font-size:0.9rem;">New Transfer</a>
+                <a href="/wizard?new=1" style="padding:12px 24px;border-radius:10px;background:linear-gradient(135deg,var(--primary),var(--secondary));color:#fff;text-decoration:none;font-weight:600;font-size:0.9rem;">New Transfer</a>
                 <button onclick="this.closest('#completionOverlay').remove()" style="padding:12px 24px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);cursor:pointer;font-size:0.9rem;">View Dashboard</button>
             </div>
             <div style="border-top:1px solid var(--border);padding-top:20px;">
@@ -1096,7 +1096,7 @@ async function cancelTransfer() {
           setText('statusText', 'Cancelled');
           updateButtons(false);
           if (goToWizard) {
-            window.location.href = '/wizard';
+            window.location.href = '/wizard?new=1';
           } else {
             setTimeout(refresh, 2000);
           }

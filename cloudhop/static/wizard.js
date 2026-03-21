@@ -412,6 +412,15 @@ function toggleAdvanced() {
 // Restore wizard state after refresh
 (function() {
   try {
+    // F309: If navigated via "New Transfer", clear all wizard state and start fresh
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('new') === '1') {
+      sessionStorage.removeItem('cloudhop_wizard');
+      // Clean up URL without reload
+      window.history.replaceState({}, '', window.location.pathname);
+      console.log('[F309] Wizard state reset for new transfer');
+      return;
+    }
     const saved = sessionStorage.getItem('cloudhop_wizard');
     if (!saved) return;
     const s = JSON.parse(saved);
