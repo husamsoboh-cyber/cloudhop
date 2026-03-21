@@ -622,6 +622,18 @@ async function refresh() {
     document.getElementById('sessionBadge').textContent = `Session ${d.session_num || 1}`;
     if (d.transfer_label) document.getElementById('transferTitle').textContent = d.transfer_label;
 
+    // Mode badge
+    const modeBadge = document.getElementById('modeBadge');
+    if (modeBadge) {
+      const mode = d.mode || 'copy';
+      const modeLabels = {copy: 'COPY', sync: 'SYNC', bisync: 'BISYNC'};
+      const modeColors = {copy: 'var(--green)', sync: 'var(--orange)', bisync: 'var(--blue)'};
+      modeBadge.textContent = modeLabels[mode] || 'COPY';
+      modeBadge.style.color = modeColors[mode] || 'var(--green)';
+      modeBadge.style.borderColor = modeColors[mode] || 'var(--green)';
+      modeBadge.style.display = 'inline-flex';
+    }
+
     // Initialize bandwidth dropdown from current transfer state
     if (d.bw_limit) {
       const bwSel = document.getElementById('bwLimit');

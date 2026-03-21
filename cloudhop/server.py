@@ -1033,6 +1033,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             bw_limit = body.get("bw_limit", "")
             checksum = body.get("checksum", False)
             fast_list = body.get("fast_list", False)
+            mode = body.get("mode", "copy")
             # First path starts immediately, rest go to queue
             first_body = {
                 "source": paths[0],
@@ -1044,6 +1045,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 "bw_limit": bw_limit,
                 "checksum": checksum,
                 "fast_list": fast_list,
+                "mode": mode,
             }
             logger.info(
                 "Multi-select start: %d paths, first=%s -> %s",
@@ -1063,6 +1065,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     "transfers": transfers,
                     "excludes": excludes,
                     "bw_limit": bw_limit,
+                    "mode": mode,
                 }
                 qr = self.manager.queue_add(q_body)
                 if qr.get("ok"):

@@ -202,6 +202,35 @@
   .form-input::placeholder { color: var(--text-muted); }
   .form-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; }
 
+  /* Mode radio cards */
+  .mode-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; }
+  @media (max-width: 500px) { .mode-options { grid-template-columns: 1fr; } }
+  .mode-card {
+    background: var(--bg); border: 2px solid var(--card-border);
+    border-radius: 12px; padding: 14px; text-align: center;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .mode-card:hover { border-color: var(--blue); }
+  .mode-card.selected { border-color: var(--blue); background: rgba(99,102,241,0.06); }
+  .mode-card.mode-sync { border-color: rgba(248,113,113,0.2); }
+  .mode-card.mode-sync:hover { border-color: var(--orange); }
+  .mode-card.mode-sync.selected { border-color: var(--orange); background: rgba(251,146,60,0.06); }
+  .mode-card.mode-bisync:hover { border-color: var(--blue-light); }
+  .mode-card.mode-bisync.selected { border-color: var(--blue-light); background: rgba(99,102,241,0.06); }
+  .mode-icon { font-size: 1.5rem; margin-bottom: 4px; }
+  .mode-label { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+  .mode-desc { font-size: 0.65rem; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+  .mode-warning-badge {
+    display: inline-block; font-size: 0.6rem; font-weight: 700; color: var(--red);
+    background: rgba(248,113,113,0.1); padding: 1px 6px; border-radius: 6px;
+    vertical-align: middle; margin-left: 4px;
+  }
+  .mode-info-badge {
+    display: inline-block; font-size: 0.6rem; font-weight: 700; color: var(--blue);
+    background: rgba(99,102,241,0.1); padding: 1px 6px; border-radius: 6px;
+    vertical-align: middle; margin-left: 4px;
+  }
+
   /* Speed radio cards */
   .speed-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   @media (max-width: 500px) { .speed-options { grid-template-columns: 1fr; } }

@@ -1,6 +1,7 @@
 """Comprehensive tests for cloudhop.transfer.TransferManager."""
 
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -1693,3 +1694,171 @@ class TestRateLimitThrottle:
             f.write(log_content)
         errors = m._parse_error_messages()
         assert any("speed reduced" in e.lower() for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# Sync mode tests
+# ---------------------------------------------------------------------------
+
+
+class TestSyncMode:
+    """Tests for sync/bisync transfer mode support."""
+
+    @pytest.fixture
+    def manager(self, tmp_path):
+        m = TransferManager(cm_dir=str(tmp_path))
+        return m
+
+    @patch("subprocess.Popen")
+    @patch("os.path.exists", return_value=True)
+    def test_sync_mode_builds_correct_command(self, mock_exists, mock_popen, manager):
+        """mode='sync' generates 'rclone sync' not 'rclone copy'."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7001
+        mock_popen.return_value = mock_proc
+
+        result = manager.start_transfer(
+            {
+                "source": "/local/src",
+                "dest": "gdrive:dst",
+                "source_type": "local",
+                "dest_type": "drive",
+                "mode": "sync",
+            }
+        )
+        assert result["ok"] is True
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "rclone"
+        assert cmd[1] == "sync"
+
+    @patch("subprocess.Popen")
+    @patch("os.path.exists", return_value=True)
+    def test_bisync_mode_builds_correct_command(self, mock_exists, mock_popen, manager):
+        """mode='bisync' generates 'rclone bisync'."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7002
+        mock_popen.return_value = mock_proc
+
+        result = manager.start_transfer(
+            {
+                "source": "/local/src",
+                "dest": "gdrive:dst",
+                "source_type": "local",
+                "dest_type": "drive",
+                "mode": "bisync",
+            }
+        )
+        assert result["ok"] is True
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "rclone"
+        assert cmd[1] == "bisync"
+
+    @patch("subprocess.Popen")
+    @patch("os.path.exists", return_value=True)
+    def test_copy_mode_default(self, mock_exists, mock_popen, manager):
+        """Missing mode defaults to 'copy' (backward compatible)."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7003
+        mock_popen.return_value = mock_proc
+
+        result = manager.start_transfer(
+            {
+                "source": "/local/src",
+                "dest": "gdrive:dst",
+                "source_type": "local",
+                "dest_type": "drive",
+            }
+        )
+        assert result["ok"] is True
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[1] == "copy"
+
+    @patch("subprocess.Popen")
+    @patch("os.path.exists", return_value=True)
+    def test_sync_warning_logged(self, mock_exists, mock_popen, manager, caplog):
+        """mode='sync' logs a WARNING about deletion."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7004
+        mock_popen.return_value = mock_proc
+
+        with caplog.at_level(logging.WARNING, logger="cloudhop.transfer"):
+            manager.start_transfer(
+                {
+                    "source": "/local/src",
+                    "dest": "gdrive:dst",
+                    "source_type": "local",
+                    "dest_type": "drive",
+                    "mode": "sync",
+                }
+            )
+        assert any("DELETE" in r.message for r in caplog.records)
+
+    @patch("subprocess.Popen")
+    def test_bisync_first_run_resync_flag(self, mock_popen, manager):
+        """First bisync run includes --resync flag."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7005
+        mock_popen.return_value = mock_proc
+
+        # Ensure the bisync_initialized marker does not exist
+        marker = os.path.join(manager.cm_dir, "bisync_initialized")
+        if os.path.exists(marker):
+            os.remove(marker)
+
+        # Use real os.path.exists so bisync marker check works; source is local so create it
+        src = os.path.join(manager.cm_dir, "fakesrc")
+        os.makedirs(src, exist_ok=True)
+
+        result = manager.start_transfer(
+            {
+                "source": src,
+                "dest": "gdrive:dst",
+                "source_type": "local",
+                "dest_type": "drive",
+                "mode": "bisync",
+            }
+        )
+        assert result["ok"] is True
+        cmd = mock_popen.call_args[0][0]
+        assert "--resync" in cmd
+        # Marker should now exist
+        assert os.path.exists(marker)
+
+    @patch("subprocess.Popen")
+    @patch("os.path.exists", return_value=True)
+    def test_mode_persisted_in_state(self, mock_exists, mock_popen, manager):
+        """Transfer mode is saved to and restored from state file."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 7006
+        mock_popen.return_value = mock_proc
+
+        manager.start_transfer(
+            {
+                "source": "/local/src",
+                "dest": "gdrive:dst",
+                "source_type": "local",
+                "dest_type": "drive",
+                "mode": "sync",
+            }
+        )
+        assert manager.state.get("mode") == "sync"
+
+        # Reload state from disk and verify
+        loaded = manager._load_state()
+        assert loaded.get("mode") == "sync"
+
+    def test_mode_in_queue(self, manager):
+        """Queue items preserve the transfer mode."""
+        result = manager.queue_add(
+            {
+                "source": "gdrive:src",
+                "dest": "onedrive:dst",
+                "source_type": "drive",
+                "dest_type": "onedrive",
+                "mode": "bisync",
+            }
+        )
+        assert result["ok"] is True
+        queue = manager.queue_list()
+        assert len(queue) == 1
+        assert queue[0]["config"]["mode"] == "bisync"

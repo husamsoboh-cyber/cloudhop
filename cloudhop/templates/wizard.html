@@ -233,6 +233,32 @@
         <div class="form-hint">Leave empty to copy to the main folder</div>
       </div>
       <div class="form-group">
+        <label class="form-label">Transfer Mode</label>
+        <div class="mode-options" role="radiogroup" aria-label="Transfer mode">
+          <div class="mode-card selected" role="radio" aria-checked="true" onclick="selectMode(this, 'copy')">
+            <input type="radio" name="mode" value="copy" checked style="display:none;">
+            <div class="mode-icon" style="color:var(--green);">&#x2192;</div>
+            <div class="mode-label">Copy</div>
+            <div class="mode-desc">Copy files from source to destination. Existing files in destination are not modified.</div>
+          </div>
+          <div class="mode-card mode-sync" role="radio" aria-checked="false" onclick="selectMode(this, 'sync')">
+            <input type="radio" name="mode" value="sync" style="display:none;">
+            <div class="mode-icon" style="color:var(--orange);">&#x21C9;</div>
+            <div class="mode-label">Sync <span class="mode-warning-badge">&#9888; Deletes</span></div>
+            <div class="mode-desc">Make destination identical to source. Files only in destination will be <strong>DELETED</strong>.</div>
+          </div>
+          <div class="mode-card mode-bisync" role="radio" aria-checked="false" onclick="selectMode(this, 'bisync')">
+            <input type="radio" name="mode" value="bisync" style="display:none;">
+            <div class="mode-icon" style="color:var(--blue);">&#x21C4;</div>
+            <div class="mode-label">Two-Way Sync <span class="mode-info-badge">&#x24D8;</span></div>
+            <div class="mode-desc">Sync both directions. Changes on either side are propagated to the other.</div>
+          </div>
+        </div>
+        <div id="modeWarning" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:10px;font-size:0.8rem;color:var(--red);line-height:1.5;">
+          &#9888; <strong>Warning:</strong> Sync mode will permanently delete files in the destination that do not exist in the source. Make sure you have backups.
+        </div>
+      </div>
+      <div class="form-group">
         <label class="form-label">Transfer Speed</label>
         <div class="speed-options" role="radiogroup" aria-label="Transfer speed">
           <div class="speed-card" role="radio" aria-checked="false" onclick="selectSpeed(this, '4')">

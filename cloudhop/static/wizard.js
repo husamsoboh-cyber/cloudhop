@@ -104,6 +104,7 @@ let destProvider = null;
 let destName = '';
 let destDisplayName = '';
 let selectedSpeed = '8';
+let selectedMode = 'copy';
 let existingRemotes = [];
 
 // Multi-select state
@@ -349,6 +350,21 @@ async function goTo(step) {
         radio.checked = true;
       }
     });
+    // Restore mode card selection
+    document.querySelectorAll('.mode-card').forEach(c => {
+      c.classList.remove('selected');
+      c.setAttribute('aria-checked', 'false');
+    });
+    document.querySelectorAll('.mode-card').forEach(c => {
+      const radio = c.querySelector('input[name="mode"]');
+      if (radio && radio.value === selectedMode) {
+        c.classList.add('selected');
+        c.setAttribute('aria-checked', 'true');
+        radio.checked = true;
+      }
+    });
+    var mw = document.getElementById('modeWarning');
+    if (mw) mw.style.display = selectedMode === 'sync' ? 'block' : 'none';
   }
 
   currentStep = step;
@@ -356,7 +372,7 @@ async function goTo(step) {
   try {
     sessionStorage.setItem('cloudhop_wizard', JSON.stringify({
       step: currentStep, sourceProvider, sourceName, sourceDisplayName,
-      destProvider, destName, destDisplayName, selectedSpeed,
+      destProvider, destName, destDisplayName, selectedSpeed, selectedMode,
       sourcePath: (document.getElementById('sourcePathInput') || {}).value || '',
       destPath: (document.getElementById('destPathInput') || {}).value || '',
       sourceOther: (document.getElementById('sourceOtherInput') || {}).value || '',
@@ -404,6 +420,7 @@ function toggleAdvanced() {
     destName = s.destName || '';
     destDisplayName = s.destDisplayName || '';
     selectedSpeed = s.selectedSpeed || '8';
+    selectedMode = s.selectedMode || 'copy';
     // Re-select cards visually
     if (sourceProvider) {
       const sc = document.querySelector('#sourceGrid [data-provider="'+sourceProvider+'"]');
@@ -532,6 +549,15 @@ function selectSpeed(card, val) {
   card.classList.add('selected');
   card.setAttribute('aria-checked', 'true');
   selectedSpeed = val;
+}
+
+function selectMode(card, val) {
+  document.querySelectorAll('.mode-card').forEach(c => { c.classList.remove('selected'); c.setAttribute('aria-checked', 'false'); });
+  card.classList.add('selected');
+  card.setAttribute('aria-checked', 'true');
+  selectedMode = val;
+  var w = document.getElementById('modeWarning');
+  if (w) w.style.display = val === 'sync' ? 'block' : 'none';
 }
 
 // Build connect step
@@ -810,6 +836,7 @@ function buildSummary() {
   const excludes = document.getElementById('excludePatterns').value.trim();
   const bwLimit = document.getElementById('bwLimit').value.trim();
   const speedLabels = {'4': 'Normal (4 files)', '8': 'Fast (8 files)', '16': 'Maximum (16 files)'};
+  const modeLabels = {'copy': 'Copy', 'sync': 'Sync', 'bisync': 'Two-Way Sync'};
   const useChecksum = document.getElementById('useChecksum').checked;
   const useFastList = document.getElementById('useFastList').checked;
 
@@ -849,11 +876,17 @@ function buildSummary() {
     </div>`;
   }
 
+  const modeColor = selectedMode === 'sync' ? 'var(--orange)' : selectedMode === 'bisync' ? 'var(--blue)' : 'var(--green)';
+
   card.innerHTML = `
     ${sourceRows}
     <div class="summary-row">
       <span class="summary-label">Destination</span>
       <span class="summary-value" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(dstDisplay)}">${esc(dstDisplay)}</span>
+    </div>
+    <div class="summary-row">
+      <span class="summary-label">Mode</span>
+      <span class="summary-value" style="color:${modeColor};font-weight:700;">${esc(modeLabels[selectedMode] || 'Copy')}</span>
     </div>
     <div class="summary-row">
       <span class="summary-label">Speed</span>
@@ -871,6 +904,11 @@ function buildSummary() {
     ${useFastList ? `<div class="summary-row"><span class="summary-label">Fast listing</span><span class="summary-value">Enabled</span></div>` : ''}
   `;
 
+  if (selectedMode === 'sync') {
+    card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:8px;font-size:0.8rem;color:var(--red);line-height:1.5;">&#9888; <strong>Warning:</strong> Files in destination not present in source will be permanently deleted.</div>';
+  } else if (selectedMode === 'bisync') {
+    card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:8px;font-size:0.8rem;color:var(--blue);line-height:1.5;">&#x24D8; First sync may take longer as both sides are compared.</div>';
+  }
   if (isMulti) {
     card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:8px;font-size:0.75rem;color:var(--text-dim);">Each source will be transferred sequentially via the queue.</div>';
   }
@@ -1070,7 +1108,8 @@ async function startTransfer() {
           dest_type: destProvider === 'icloud' ? 'local' : destProvider,
           bw_limit: document.getElementById('bwLimit').value.trim(),
           checksum: document.getElementById('useChecksum').checked,
-          fast_list: document.getElementById('useFastList').checked
+          fast_list: document.getElementById('useFastList').checked,
+          mode: selectedMode
         })
       });
       clearTimeout(safetyTimeout);
@@ -1103,7 +1142,8 @@ async function startTransfer() {
           dest_type: destProvider === 'icloud' ? 'local' : destProvider,
           bw_limit: document.getElementById('bwLimit').value.trim(),
           checksum: document.getElementById('useChecksum').checked,
-          fast_list: document.getElementById('useFastList').checked
+          fast_list: document.getElementById('useFastList').checked,
+          mode: selectedMode
         })
       });
       clearTimeout(safetyTimeout);

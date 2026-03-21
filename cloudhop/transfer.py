@@ -1548,6 +1548,7 @@ class TransferManager:
             result["all_file_types"] = dict(self.state.get("all_file_types", {}))
             result["total_copied_count"] = self.state.get("total_copied_count", 0)
             result["transfer_label"] = self.transfer_label
+            result["mode"] = self.state.get("mode", "copy")
 
             daily: Dict[str, float] = {}
             for s in sessions:
@@ -1888,6 +1889,7 @@ class TransferManager:
                 "transfers": transfer_config.get("transfers", "8"),
                 "excludes": transfer_config.get("excludes", []),
                 "bw_limit": transfer_config.get("bw_limit", ""),
+                "mode": transfer_config.get("mode", "copy"),
             },
         }
         with self._queue_lock:
@@ -2059,11 +2061,25 @@ class TransferManager:
                     "msg": f"Cannot create folder: {dest}. Please check the path.",
                 }
 
+        # Transfer mode: copy (default), sync, or bisync
+        mode: str = body.get("mode", "copy")
+        if mode not in ("copy", "sync", "bisync"):
+            mode = "copy"
+        logger.info("Transfer mode: %s", mode)
+
+        if mode == "sync":
+            logger.warning("Sync mode will DELETE files in destination that don't exist in source")
+        elif mode == "bisync":
+            logger.info("Bisync mode: two-way sync between source and destination")
+
         self.set_transfer_paths(source, dest)
+
+        # Determine rclone subcommand based on mode
+        rclone_subcommand = mode if mode in ("sync", "bisync") else "copy"
 
         self.rclone_cmd = [
             "rclone",
-            "copy",
+            rclone_subcommand,
             source,
             dest,
             f"--transfers={transfers}",
@@ -2141,6 +2157,18 @@ class TransferManager:
             )
             logger.info("Proton Drive: applied rate limit protection flags")
 
+        # Bisync: first run requires --resync flag (rclone requirement)
+        if mode == "bisync":
+            bisync_marker = os.path.join(self.cm_dir, "bisync_initialized")
+            if not os.path.exists(bisync_marker):
+                self.rclone_cmd.append("--resync")
+                logger.info("Bisync: first run, adding --resync flag")
+                try:
+                    with open(bisync_marker, "w") as f:
+                        f.write(datetime.now().isoformat())
+                except OSError:
+                    pass
+
         # Save rclone_cmd to state but strip flags that contain credentials.
         # Only strip --flag=value patterns that match known credential flags;
         # never strip positional args (source/dest paths) even if they
@@ -2168,6 +2196,7 @@ class TransferManager:
         with self.state_lock:
             self.state["rclone_cmd"] = safe_cmd
             self.state["transfer_label"] = self.transfer_label
+            self.state["mode"] = mode
         self.save_state()
 
         try:
