@@ -59,6 +59,7 @@ from .presets import (
     run_preset,
     save_preset,
 )
+from .settings import load_settings, save_settings
 from .templates import render
 from .transfer import (
     TransferManager,
@@ -452,6 +453,11 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Preset not found"}, 404)
             else:
                 self._send_json(preset)
+        elif self.path == "/api/settings":
+            self._send_json(load_settings())
+        elif self.path == "/settings":
+            html = render("settings.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+            self._send_html(html)
         elif self.path == "/":
             if self.manager.is_rclone_running() or self.manager.transfer_active:
                 html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
@@ -1254,6 +1260,25 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error("History resume error: %s", e)
                 self._send_json({"ok": False, "msg": "Failed to resume transfer"})
+        elif self.path == "/api/settings":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            result = save_settings(body)
+            self._send_json(result, 200 if result.get("ok") else 400)
+        elif self.path == "/api/settings/test-email":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            try:
+                from .email_notify import send_email  # noqa: F811
+
+                result = send_email(body)
+                self._send_json(result, 200 if result.get("ok") else 500)
+            except ImportError:
+                self._send_json({"ok": False, "msg": "Email module not available yet"})
         else:
             self._send_404()
 

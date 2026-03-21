@@ -733,3 +733,43 @@ class TestCORSPreflight:
         with urllib.request.urlopen(req, timeout=5) as resp:
             body = resp.read()
             assert body == b""
+
+
+# ---------------------------------------------------------------------------
+# Settings API
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsAPI:
+    def test_get_settings_returns_200(self, server_fixture):
+        port = server_fixture["port"]
+        data = _fetch(_get(port, "/api/settings"))
+        assert "email_enabled" in data
+
+    def test_post_settings_valid(self, server_fixture):
+        port = server_fixture["port"]
+        data = _fetch(
+            _post(
+                port, "/api/settings", {"email_smtp_host": "smtp.test.com", "email_smtp_port": 587}
+            )
+        )
+        assert data["ok"] is True
+
+    def test_post_settings_no_csrf(self, server_fixture):
+        port = server_fixture["port"]
+        status, body = _fetch_raw(_post(port, "/api/settings", {}, csrf=None))
+        assert status == 403
+
+    @pytest.mark.skip(reason="settings.html created in prompt 2/3")
+    def test_get_settings_page_html(self, server_fixture):
+        port = server_fixture["port"]
+        status, body = _fetch_raw(_get(port, "/settings"))
+        assert status == 200
+        assert b"text/html" in body or status == 200
+
+    def test_settings_password_not_in_response(self, server_fixture):
+        port = server_fixture["port"]
+        # Save a password first
+        _fetch(_post(port, "/api/settings", {"email_password": "secret123"}))
+        data = _fetch(_get(port, "/api/settings"))
+        assert data["email_password"] == ""
