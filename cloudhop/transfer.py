@@ -202,7 +202,6 @@ _KNOWN_RCLONE_FLAGS = {
     "--buffer-size",
     "--checkers",
     "--checksum",
-    "--config",
     "--contimeout",
     "--create-empty-src-dirs",
     "--drive-chunk-size",
@@ -229,6 +228,8 @@ _KNOWN_RCLONE_FLAGS = {
     "--verbose",
 }
 
+_ALLOWED_SUBCOMMANDS = {"copy", "sync", "bisync", "check"}
+
 _SHELL_META = set(";&|`$(){}!><\n\r\0")
 
 
@@ -245,6 +246,13 @@ def validate_rclone_cmd(cmd: list) -> bool:
     exe = os.path.basename(cmd[0])
     if exe not in ("rclone", "rclone.exe"):
         logger.error("validate_rclone_cmd: executable is not rclone: %s", cmd[0])
+        return False
+
+    if len(cmd) < 2:
+        logger.error("validate_rclone_cmd: missing subcommand")
+        return False
+    if cmd[1] not in _ALLOWED_SUBCOMMANDS:
+        logger.error("validate_rclone_cmd: disallowed subcommand: %s", cmd[1])
         return False
 
     for arg in cmd[1:]:
@@ -1183,7 +1191,7 @@ class TransferManager:
             with self.state_lock:
                 log_file = self.log_file
         error_msgs: List[str] = []
-        self._rate_limited = False
+        local_rate_limited = False
         try:
             with open(log_file, "rb") as f:
                 f.seek(0, 2)
@@ -1194,6 +1202,8 @@ class TransferManager:
             return []
         rate_limit_count = 0
         now = time.time()
+        local_timestamps: List[float] = []
+        local_last_time = 0.0
         for line in err_tail.split("\n"):
             if "ERROR" in line and "Errors:" not in line:
                 m = RE_ERROR_MSG.search(line)
@@ -1207,18 +1217,24 @@ class TransferManager:
                         or "retry after" in msg_lower
                     ):
                         rate_limit_count += 1
-                        self._rate_limited = True
-                        # Track timestamp for time-window throttle
+                        local_rate_limited = True
                         ts_m = RE_TIMESTAMP.search(line)
                         if ts_m:
-                            self._rate_limit_timestamps.append(now)
-                            self._last_rate_limit_time = now
+                            local_timestamps.append(now)
+                            local_last_time = now
                         continue
                     if msg not in error_msgs:
                         error_msgs.append(msg)
 
-        # Prune old timestamps (keep only last 60 seconds)
-        self._rate_limit_timestamps = [t for t in self._rate_limit_timestamps if now - t < 60]
+        # Update shared state under lock
+        with self.state_lock:
+            # Merge with existing timestamps, prune old
+            merged_timestamps = [t for t in self._rate_limit_timestamps if now - t < 60]
+            merged_timestamps.extend(local_timestamps)
+            self._rate_limit_timestamps = merged_timestamps
+            self._rate_limited = local_rate_limited
+            if local_last_time > 0:
+                self._last_rate_limit_time = local_last_time
 
         # B3: Auto-throttle when 3+ rate limit errors in 60s window
         if len(self._rate_limit_timestamps) >= 3 and self.is_rclone_running():
@@ -1233,7 +1249,7 @@ class TransferManager:
         ):
             self._restore_transfers_gradual()
 
-        if self._rate_limited:
+        if local_rate_limited:
             if self._throttle_active:
                 summary = (
                     f"Speed reduced - cloud provider rate limit detected "
@@ -1711,7 +1727,6 @@ class TransferManager:
                 "ok": False,
                 "msg": f"Transfer keeps failing. Waiting {wait}s before retrying. Check your internet connection.",
             }
-        self._crash_times.append(now)
         try:
             popen_kwargs = {
                 "stdout": subprocess.DEVNULL,
@@ -1748,6 +1763,8 @@ class TransferManager:
             logger.info("Transfer resumed (PID %s), marked just_started", proc.pid)
             return {"ok": True, "msg": f"Started rclone (PID {proc.pid})"}
         except Exception as e:
+            self._crash_times.append(now)
+            logger.warning("Resume failed, crash backoff count: %d", len(self._crash_times))
             return {"ok": False, "msg": f"Failed to start: {str(e)}"}
 
     def set_bandwidth(self, limit: str) -> Dict[str, Any]:
@@ -2485,6 +2502,7 @@ class TransferManager:
                     and not self._completion_notified
                 ):
                     self._completion_notified = True
+                    status = {}
                     try:
                         status = self.parse_current()
                         files = status.get("global_files_done", 0)
@@ -2505,14 +2523,13 @@ class TransferManager:
                             notify(title, err_summary)
                     except Exception:
                         pass
-                    # Email notification on completion
+                    # Email notification - reuse status from above
                     try:
                         from .email_notify import build_completion_email, send_email
                         from .settings import load_settings_with_secrets
 
                         email_settings = load_settings_with_secrets()
-                        if email_settings.get("email_enabled"):
-                            status = self.parse_current()
+                        if email_settings.get("email_enabled") and status:
                             pct = status.get("global_pct", 0)
                             files = status.get("global_files_done", 0)
                             should_email = (

@@ -15,7 +15,7 @@ import pytest
 
 _POSIX = sys.platform != "win32"
 
-from cloudhop.transfer import TransferManager, get_existing_remotes, remote_exists
+from cloudhop.transfer import TransferManager, get_existing_remotes, remote_exists, validate_rclone_cmd
 
 # ---------------------------------------------------------------------------
 # Realistic fake rclone log content
@@ -1862,3 +1862,59 @@ class TestSyncMode:
         queue = manager.queue_list()
         assert len(queue) == 1
         assert queue[0]["config"]["mode"] == "bisync"
+
+
+# ===========================================================================
+# F103 – Successful resumes must not trigger crash backoff
+# ===========================================================================
+
+
+class TestCrashBackoffSuccessNoCount:
+    @patch("cloudhop.transfer.platform.system", return_value="Linux")
+    @patch("subprocess.Popen")
+    def test_successful_resumes_do_not_trigger_backoff(self, mock_popen, mock_sys, manager):
+        """4 rapid successful resumes must NOT trigger crash backoff."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 9999
+        mock_popen.return_value = mock_proc
+        manager.rclone_cmd = ["rclone", "copy", "a:", "b:"]
+
+        for _ in range(4):
+            # Reset so is_rclone_running() returns False
+            manager.transfer_active = False
+            manager.rclone_pid = None
+            manager._rclone_proc = None
+            result = manager.resume()
+            assert result["ok"] is True, f"Expected ok=True, got: {result}"
+
+
+# ===========================================================================
+# F220 – --config must NOT be in the rclone flag allowlist
+# ===========================================================================
+
+
+class TestConfigFlagRejected:
+    def test_config_flag_rejected(self):
+        """--config flag must be rejected by validate_rclone_cmd."""
+        assert validate_rclone_cmd(
+            ["rclone", "copy", "src:", "dst:", "--config=/tmp/evil.conf"]
+        ) is False
+
+
+# ===========================================================================
+# F221 – Subcommand validation
+# ===========================================================================
+
+
+class TestSubcommandValidation:
+    def test_purge_rejected(self):
+        assert validate_rclone_cmd(["rclone", "purge", "remote:"]) is False
+
+    def test_delete_rejected(self):
+        assert validate_rclone_cmd(["rclone", "delete", "remote:"]) is False
+
+    def test_copy_allowed(self):
+        assert validate_rclone_cmd(["rclone", "copy", "src:", "dst:"]) is True
+
+    def test_sync_allowed(self):
+        assert validate_rclone_cmd(["rclone", "sync", "src:", "dst:"]) is True
