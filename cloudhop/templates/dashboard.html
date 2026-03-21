@@ -143,6 +143,27 @@
   <div id="queueEmpty" style="display:none;text-align:center;padding:16px 0;color:var(--text-secondary);font-size:0.85rem;">No transfers queued. Start a new transfer from the wizard.</div>
 </div>
 
+<!-- ========== PRESETS ========== -->
+<div id="presetsSection" class="card" style="display:none;margin-bottom:var(--section-gap);padding:20px 24px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+    <div style="font-size:0.95rem;font-weight:700;color:var(--text-primary);">Presets</div>
+  </div>
+  <div id="presetsList"></div>
+  <div id="presetsEmpty" style="display:none;text-align:center;padding:16px 0;color:var(--text-secondary);font-size:0.85rem;">No presets saved. Create one from the transfer wizard.</div>
+</div>
+
+<!-- Delete Preset Confirm Modal -->
+<div id="deletePresetModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);">
+  <div style="background:var(--card-bg,#1e1e2e);border:1px solid var(--card-border,#333);border-radius:16px;padding:24px;max-width:360px;width:90%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);">
+    <div style="font-size:1rem;font-weight:700;margin-bottom:12px;color:var(--text-primary,#e0e0f0);">Delete Preset?</div>
+    <p style="font-size:0.85rem;color:var(--text-secondary,#888);margin-bottom:20px;">This cannot be undone.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="ctrl-btn" onclick="closeDeletePresetModal()" style="padding:8px 16px;border-radius:8px;">Cancel</button>
+      <button id="confirmDeletePresetBtn" onclick="confirmDeletePreset()" style="padding:8px 16px;border-radius:8px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-weight:600;">Delete</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========== STATS GRID ========== -->
 <div class="stats-grid" id="statsGrid">
   <div class="stat-card card">

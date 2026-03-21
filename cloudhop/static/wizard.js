@@ -946,6 +946,15 @@ function showWizardError(msg) {
   if (el) { el.textContent = msg; el.style.display = 'block'; setTimeout(() => { el.style.display = 'none'; }, 8000); }
 }
 
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;background:var(--green,#22c55e);color:#fff;border-radius:10px;font-size:0.9rem;font-weight:600;z-index:1100;opacity:0;transition:opacity 0.3s;';
+  document.body.appendChild(t);
+  requestAnimationFrame(() => { t.style.opacity = '1'; });
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+}
+
 function getSourcePath() {
   const srcSub = document.getElementById('sourceSubfolder').value.trim();
   if (sourceProvider === 'local' || sourceProvider === 'icloud') {
@@ -1202,6 +1211,67 @@ document.addEventListener('DOMContentLoaded', function() {
     btn._listenerAdded = true;
   }
 });
+
+// ── Preset save ─────────────────────────────────────────────────────
+function _buildPresetConfig() {
+  const src = getSourcePath();
+  const dst = getDestPath();
+  const excludes = document.getElementById('excludePatterns').value.trim();
+  const excludeList = excludes ? excludes.split(',').map(e => e.trim()).filter(Boolean) : [];
+  return {
+    source: src || '',
+    dest: dst || '',
+    transfers: selectedSpeed,
+    excludes: excludeList,
+    source_type: sourceProvider === 'icloud' ? 'local' : (sourceProvider || ''),
+    dest_type: destProvider === 'icloud' ? 'local' : (destProvider || ''),
+    bw_limit: document.getElementById('bwLimit').value.trim(),
+    checksum: document.getElementById('useChecksum').checked,
+    fast_list: document.getElementById('useFastList').checked,
+    mode: selectedMode
+  };
+}
+
+function saveAsPreset() {
+  const cfg = _buildPresetConfig();
+  const srcLabel = (cfg.source || '').split(':')[0] || cfg.source || 'Source';
+  const dstLabel = (cfg.dest || '').split(':')[0] || cfg.dest || 'Dest';
+  const defaultName = srcLabel.split('/').pop() + ' \u2192 ' + dstLabel.split('/').pop();
+  document.getElementById('presetNameInput').value = defaultName;
+  document.getElementById('presetModal').style.display = 'flex';
+  document.getElementById('presetNameInput').focus();
+}
+
+function closePresetModal() {
+  document.getElementById('presetModal').style.display = 'none';
+}
+
+async function confirmSavePreset() {
+  const name = document.getElementById('presetNameInput').value.trim();
+  if (!name) return;
+  const btn = document.getElementById('presetSaveConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const resp = await fetch('/api/presets', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+      body: JSON.stringify({name: name, config: _buildPresetConfig()})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      closePresetModal();
+      showToast('Preset saved!');
+    } else {
+      alert(data.msg || 'Failed to save preset');
+    }
+  } catch(e) {
+    alert('Error saving preset: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
 
 // Exclude folder picker
 async function browseExcludes() {

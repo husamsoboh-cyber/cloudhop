@@ -1533,8 +1533,10 @@ if (_isDemo) {
 
 refresh();
 refreshQueue();
+refreshPresets();
 ensurePolling(_isDemo ? 2000 : 5000);
 setInterval(refreshQueue, _isDemo ? 5000 : 5000);
+setInterval(refreshPresets, 10000);
 window.addEventListener('resize', () => {
   if (drawAreaChart._cache) drawAreaChart._cache = {};
   drawAreaChart('speedChart', speedHistory, '#6366f1', 'speedGrad', fmtSpeedShort, true);
@@ -1669,4 +1671,85 @@ async function queueStartNext() {
     refreshQueue();
     refresh();
   } catch (e) { console.error('Queue start-next error:', e); }
+}
+
+// ── Presets ──────────────────────────────────────────────────────────
+let _deletePresetId = null;
+
+async function refreshPresets() {
+  try {
+    const res = await fetch('/api/presets');
+    const data = await res.json();
+    const presets = data.presets || [];
+    const section = document.getElementById('presetsSection');
+    const list = document.getElementById('presetsList');
+    const empty = document.getElementById('presetsEmpty');
+    if (!section) return;
+    if (presets.length === 0) {
+      section.style.display = 'block';
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    section.style.display = 'block';
+    empty.style.display = 'none';
+    list.innerHTML = presets.map(p => {
+      const cfg = p.config || {};
+      const srcLabel = (cfg.source || '').split('/').pop() || cfg.source || '?';
+      const dstLabel = (cfg.dest || '').split('/').pop() || cfg.dest || '?';
+      const mode = cfg.mode || 'copy';
+      const lastUsed = p.last_used ? new Date(p.last_used).toLocaleDateString() : 'Never';
+      return '<div class="preset-item" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--card-border,#333);">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;font-size:0.9rem;color:var(--text-primary,#e0e0f0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(p.name) + '</div>' +
+          '<div style="font-size:0.75rem;color:var(--text-secondary,#888);margin-top:2px;">' +
+            esc(srcLabel) + ' \u2192 ' + esc(dstLabel) +
+            ' <span style="display:inline-block;padding:1px 6px;border-radius:4px;background:var(--bg,#0d0d1a);font-size:0.7rem;margin-left:4px;">' + esc(mode) + '</span>' +
+            ' &middot; Used ' + p.use_count + 'x &middot; Last: ' + esc(lastUsed) +
+          '</div>' +
+        '</div>' +
+        '<button onclick="runPreset(\'' + p.preset_id + '\')" style="padding:6px 16px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--primary,#6366f1),var(--secondary,#8b5cf6));color:#fff;cursor:pointer;font-size:0.8rem;font-weight:600;white-space:nowrap;">Run</button>' +
+        '<button onclick="promptDeletePreset(\'' + p.preset_id + '\')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--card-border,#333);background:transparent;color:var(--text-secondary,#888);cursor:pointer;font-size:0.8rem;" onmouseover="this.style.borderColor=\'#ef4444\';this.style.color=\'#ef4444\'" onmouseout="this.style.borderColor=\'var(--card-border,#333)\';this.style.color=\'var(--text-secondary,#888)\'">Delete</button>' +
+      '</div>';
+    }).join('');
+  } catch (e) { console.error('Presets refresh error:', e); }
+}
+
+async function runPreset(presetId) {
+  try {
+    const res = await fetch('/api/presets/' + presetId + '/run', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': getCsrfToken(), 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const data = await res.json();
+    if (data.ok) {
+      refresh();
+      refreshPresets();
+    } else {
+      alert(data.msg || 'Failed to run preset');
+    }
+  } catch (e) { alert('Error running preset: ' + e.message); }
+}
+
+function promptDeletePreset(presetId) {
+  _deletePresetId = presetId;
+  document.getElementById('deletePresetModal').style.display = 'block';
+}
+
+function closeDeletePresetModal() {
+  _deletePresetId = null;
+  document.getElementById('deletePresetModal').style.display = 'none';
+}
+
+async function confirmDeletePreset() {
+  if (!_deletePresetId) return;
+  try {
+    await fetch('/api/presets/' + _deletePresetId, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': getCsrfToken() }
+    });
+    closeDeletePresetModal();
+    refreshPresets();
+  } catch (e) { console.error('Delete preset error:', e); }
 }

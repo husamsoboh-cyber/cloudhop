@@ -51,6 +51,13 @@ logger = logging.getLogger("cloudhop.server")
 # Serialises concurrent rclone config create calls (e.g. two browser tabs).
 _configure_lock = threading.Lock()
 
+from .presets import (
+    delete_preset,
+    get_preset,
+    list_presets,
+    run_preset,
+    save_preset,
+)
 from .templates import render
 from .transfer import (
     TransferManager,
@@ -432,6 +439,18 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/wizard":
             html = render("wizard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
             self._send_html(html)
+        elif self.path == "/api/presets":
+            self._send_json({"presets": list_presets()})
+        elif self.path.startswith("/api/presets/"):
+            preset_id = self.path[len("/api/presets/") :]
+            if not re.match(r"^[0-9a-f]{16}$", preset_id):
+                self._send_json({"ok": False, "msg": "Invalid preset ID"}, 400)
+                return
+            preset = get_preset(preset_id)
+            if preset is None:
+                self._send_json({"ok": False, "msg": "Preset not found"}, 404)
+            else:
+                self._send_json(preset)
         elif self.path == "/":
             if self.manager.is_rclone_running() or self.manager.transfer_active:
                 html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
@@ -1105,6 +1124,22 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/api/queue/start-next":
             logger.info("Queue API: start next")
             self._send_json(self.manager.queue_process_next())
+        elif self.path == "/api/presets":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            name = body.get("name", "")
+            config = body.get("config", {})
+            if not name or not isinstance(config, dict):
+                self._send_json({"ok": False, "msg": "Missing name or config"}, 400)
+                return
+            preset_id = save_preset(name, config)
+            self._send_json({"ok": True, "preset_id": preset_id})
+        elif re.match(r"^/api/presets/[0-9a-f]{16}/run$", self.path):
+            preset_id = self.path.split("/")[3]
+            result = run_preset(preset_id, self.manager)
+            self._send_json(result)
         elif self.path == "/api/history/resume":
             body = self._read_body()
             if body is None:
@@ -1161,6 +1196,16 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": False, "msg": "Server not ready"}, 503)
             return
         if not self._check_csrf():
+            return
+
+        # DELETE /api/presets/<preset_id>
+        m = re.match(r"^/api/presets/([0-9a-f]{16})$", self.path)
+        if m:
+            preset_id = m.group(1)
+            if delete_preset(preset_id):
+                self._send_json({"ok": True})
+            else:
+                self._send_json({"ok": False, "msg": "Preset not found"}, 404)
             return
 
         # DELETE /api/queue/<queue_id>

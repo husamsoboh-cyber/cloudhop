@@ -765,4 +765,6 @@ html { scrollbar-width: thin; }
 @media (max-width: 640px) {
   .queue-item { flex-wrap: wrap; gap: 8px; }
   .queue-item-info { width: 100%; }
+  .preset-item { flex-wrap: wrap !important; }
+  .preset-item > div:first-child { width: 100%; }
 }
