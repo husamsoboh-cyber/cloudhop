@@ -856,6 +856,118 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     self._send_json({"ok": False, "msg": str(e)})
             else:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+        elif self.path == "/api/wizard/preview-multi":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            paths = body.get("paths", [])
+            if not isinstance(paths, list) or not paths:
+                self._send_json({"ok": False, "msg": "No paths provided"}, 400)
+                return
+            if len(paths) > 50:
+                self._send_json({"ok": False, "msg": "Too many paths (max 50)"}, 400)
+                return
+            source_type = body.get("source_type", "")
+            dest_type = body.get("dest_type", "")
+            bw_limit_str = body.get("bw_limit", "")
+            total_files = 0
+            total_bytes = 0
+            sources_info = []
+            for p in paths:
+                if not isinstance(p, str) or not p:
+                    continue
+                if not validate_rclone_input(p, "source"):
+                    self._send_json({"ok": False, "msg": f"Invalid path: {p}"}, 400)
+                    return
+                try:
+                    size_cmd = ["rclone", "size", p, "--json"]
+                    for excl in SYSTEM_EXCLUDES:
+                        size_cmd.append(f"--exclude={excl}")
+                    result = subprocess.run(
+                        size_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=RCLONE_PREVIEW_TIMEOUT_SEC,
+                    )
+                    if result.returncode == 0:
+                        data = json.loads(result.stdout)
+                        fc = data.get("count", 0)
+                        sb = data.get("bytes", 0)
+                        total_files += fc
+                        total_bytes += sb
+                        sources_info.append({"path": p, "files": fc, "bytes": sb})
+                    else:
+                        sources_info.append(
+                            {"path": p, "files": 0, "bytes": 0, "error": "scan failed"}
+                        )
+                except subprocess.TimeoutExpired:
+                    sources_info.append({"path": p, "files": 0, "bytes": 0, "error": "timeout"})
+                except Exception as e:
+                    sources_info.append({"path": p, "files": 0, "bytes": 0, "error": str(e)})
+            # Format combined size
+            if total_bytes > 1073741824:
+                size_str = f"{total_bytes / 1073741824:.2f} GiB"
+            elif total_bytes > 1048576:
+                size_str = f"{total_bytes / 1048576:.1f} MiB"
+            else:
+                size_str = f"{total_bytes / 1024:.0f} KiB"
+            # ETA estimate
+            _PROVIDER_SPEEDS_MBS = {
+                "local": 100,
+                "sftp": 100,
+                "drive": 10,
+                "onedrive": 10,
+                "protondrive": 3,
+                "s3": 20,
+                "b2": 20,
+            }
+            if bw_limit_str:
+                try:
+                    bw_val = float(re.sub(r"[^0-9.]", "", bw_limit_str))
+                    speed_est = bw_val * 1024 * 1024
+                except (ValueError, TypeError):
+                    speed_est = 10 * 1024 * 1024
+            else:
+                src_mbs = _PROVIDER_SPEEDS_MBS.get(source_type, 10)
+                dst_mbs = _PROVIDER_SPEEDS_MBS.get(dest_type, 10)
+                speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
+            est_sec = total_bytes / speed_est if speed_est > 0 else 0
+            if est_sec < 60:
+                est_dur = "less than a minute"
+            elif est_sec < 3600:
+                est_dur = f"~{int(est_sec / 60)} minutes"
+            elif est_sec < 86400:
+                eh = int(est_sec / 3600)
+                em = int((est_sec % 3600) / 60)
+                est_dur = f"~{eh} hour{'s' if eh != 1 else ''}"
+                if em > 0:
+                    est_dur += f" {em} minutes"
+            else:
+                ed = int(est_sec / 86400)
+                eh = int((est_sec % 86400) / 3600)
+                est_dur = f"~{ed} day{'s' if ed != 1 else ''}"
+                if eh > 0:
+                    est_dur += f" {eh} hour{'s' if eh != 1 else ''}"
+            logger.info(
+                "Multi-select: %d items selected, total %d files, %s",
+                len(paths),
+                total_files,
+                size_str,
+            )
+            self._send_json(
+                {
+                    "ok": True,
+                    "count": total_files,
+                    "size": size_str,
+                    "size_bytes": total_bytes,
+                    "sources": sources_info,
+                    "num_sources": len(paths),
+                    "estimated_duration": est_dur,
+                    "estimated_duration_sec": int(est_sec),
+                    "estimated_disclaimer": "Estimate based on typical speeds. Actual time may vary.",
+                }
+            )
         elif self.path == "/api/schedule":
             body = self._read_body()
             if body is None:
@@ -900,6 +1012,71 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 logger.info("Transfer started (PID %s)", result.get("pid"))
             else:
                 logger.error("Transfer failed to start: %s", result.get("msg"))
+            self._send_json(result)
+        elif self.path == "/api/wizard/start-multi":
+            body = self._read_body()
+            if body is None:
+                self._send_json({"ok": False, "msg": "Invalid request"}, 400)
+                return
+            paths = body.get("paths", [])
+            dest = body.get("dest", "")
+            if not isinstance(paths, list) or not paths:
+                self._send_json({"ok": False, "msg": "No paths provided"}, 400)
+                return
+            if not dest:
+                self._send_json({"ok": False, "msg": "Missing destination"}, 400)
+                return
+            transfers = body.get("transfers", "8")
+            excludes = body.get("excludes", [])
+            source_type = body.get("source_type", "")
+            dest_type = body.get("dest_type", "")
+            bw_limit = body.get("bw_limit", "")
+            checksum = body.get("checksum", False)
+            fast_list = body.get("fast_list", False)
+            # First path starts immediately, rest go to queue
+            first_body = {
+                "source": paths[0],
+                "dest": dest,
+                "transfers": transfers,
+                "excludes": excludes,
+                "source_type": source_type,
+                "dest_type": dest_type,
+                "bw_limit": bw_limit,
+                "checksum": checksum,
+                "fast_list": fast_list,
+            }
+            logger.info(
+                "Multi-select start: %d paths, first=%s -> %s",
+                len(paths),
+                paths[0],
+                dest,
+            )
+            result = self.manager.start_transfer(first_body)
+            queue_ids = []
+            # Queue remaining paths
+            for p in paths[1:]:
+                q_body = {
+                    "source": p,
+                    "dest": dest,
+                    "source_type": source_type,
+                    "dest_type": dest_type,
+                    "transfers": transfers,
+                    "excludes": excludes,
+                    "bw_limit": bw_limit,
+                }
+                qr = self.manager.queue_add(q_body)
+                if qr.get("ok"):
+                    queue_ids.append(qr["queue_id"])
+            if result.get("ok"):
+                logger.info(
+                    "Multi-select: first transfer started (PID %s), %d queued",
+                    result.get("pid"),
+                    len(queue_ids),
+                )
+            else:
+                logger.error("Multi-select: first transfer failed: %s", result.get("msg"))
+            result["queued"] = queue_ids
+            result["total_paths"] = len(paths)
             self._send_json(result)
         elif self.path == "/api/bwlimit":
             body = self._read_body()

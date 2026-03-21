@@ -106,6 +106,9 @@ let destDisplayName = '';
 let selectedSpeed = '8';
 let existingRemotes = [];
 
+// Multi-select state
+let multiSelectedPaths = [];  // [{path, name, isFolder}]
+
 const providerKeys = {
   drive: 'gdrive', onedrive: 'onedrive', dropbox: 'dropbox', mega: 'mega', s3: 's3', protondrive: 'protondrive', local: 'local', icloud: 'local', other: null
 };
@@ -813,9 +816,13 @@ function buildSummary() {
   let srcPath = getSourcePath();
   let dstPath = getDestPath();
 
+  const isMulti = multiSelectedPaths.length > 1;
+
   // Show full path for local/icloud sources instead of generic "Local Folder"
   let srcDisplay = sourceDisplayName;
-  if ((sourceProvider === 'local' || sourceProvider === 'icloud') && srcPath) {
+  if (isMulti) {
+    srcDisplay = multiSelectedPaths.length + ' sources selected';
+  } else if ((sourceProvider === 'local' || sourceProvider === 'icloud') && srcPath) {
     srcDisplay = srcPath;
   } else if (srcSub) {
     srcDisplay = sourceDisplayName + ' / ' + srcSub;
@@ -828,11 +835,22 @@ function buildSummary() {
     dstDisplay = destDisplayName + ' / ' + dstSub;
   }
 
-  card.innerHTML = `
-    <div class="summary-row">
+  let sourceRows = '';
+  if (isMulti) {
+    sourceRows = '<div class="summary-row"><span class="summary-label">Sources (' + multiSelectedPaths.length + ')</span><span class="summary-value" style="display:flex;flex-direction:column;gap:2px;">';
+    multiSelectedPaths.forEach(s => {
+      sourceRows += '<span style="font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(s.path) + '">' + esc(s.name || s.path) + '</span>';
+    });
+    sourceRows += '</span></div>';
+  } else {
+    sourceRows = `<div class="summary-row">
       <span class="summary-label">Source</span>
       <span class="summary-value" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(srcDisplay)}">${esc(srcDisplay)}</span>
-    </div>
+    </div>`;
+  }
+
+  card.innerHTML = `
+    ${sourceRows}
     <div class="summary-row">
       <span class="summary-label">Destination</span>
       <span class="summary-value" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(dstDisplay)}">${esc(dstDisplay)}</span>
@@ -853,6 +871,10 @@ function buildSummary() {
     ${useFastList ? `<div class="summary-row"><span class="summary-label">Fast listing</span><span class="summary-value">Enabled</span></div>` : ''}
   `;
 
+  if (isMulti) {
+    card.innerHTML += '<div style="margin-top:10px;padding:10px 14px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);border-radius:8px;font-size:0.75rem;color:var(--text-dim);">Each source will be transferred sequentially via the queue.</div>';
+  }
+
   // Add schedule info if enabled
   const schedEl = document.getElementById('scheduleEnabled');
   if (schedEl && schedEl.checked) {
@@ -872,6 +894,12 @@ function buildSummary() {
         <span class="summary-label">Schedule</span>
         <span class="summary-value">${esc(schedDesc)}</span>
       </div>`;
+  }
+
+  // Update button text for multi-select
+  const startBtn = document.getElementById('startBtn');
+  if (startBtn) {
+    startBtn.textContent = isMulti ? 'Start All' : 'Start Transfer';
   }
 }
 
@@ -923,32 +951,64 @@ async function previewTransfer() {
   const result = document.getElementById('previewResult');
   result.style.display = 'block';
   result.innerHTML = '<div class="spinner" style="display:inline-block;margin-right:8px;vertical-align:middle;"></div> Calculating size...';
-  const srcPath = getSourcePath();
-  try {
-    const resp = await fetch('/api/wizard/preview', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-      body: JSON.stringify({source: srcPath, dest: getDestPath(), source_type: sourceProvider, dest_type: destProvider})
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      const pathDisplay = srcPath ? truncatePath(srcPath, 60) : '';
-      let html = '<div style="margin-bottom:6px;"><strong>Ready to transfer: '
-        + esc(data.count.toLocaleString()) + ' files</strong> (' + esc(data.size) + ')</div>';
-      if (pathDisplay) {
-        html += '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px;">Source: ' + esc(pathDisplay) + '</div>';
+
+  const isMulti = multiSelectedPaths.length > 1;
+
+  if (isMulti) {
+    // Multi-select preview
+    const paths = multiSelectedPaths.map(s => _getMultiSelectFullPath(s.path));
+    try {
+      const resp = await fetch('/api/wizard/preview-multi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        body: JSON.stringify({paths: paths, source_type: sourceProvider, dest_type: destProvider, bw_limit: document.getElementById('bwLimit').value.trim()})
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        let html = '<div style="margin-bottom:6px;"><strong>' + esc(data.num_sources + ' sources: ' + data.count.toLocaleString() + ' files') + '</strong> (' + esc(data.size) + ')</div>';
+        data.sources.forEach(s => {
+          const name = s.path.split('/').pop() || s.path;
+          html += '<div style="font-size:0.75rem;color:var(--text-dim);padding:2px 0;">' + esc(name) + (s.error ? ' <span style="color:var(--red);">(' + esc(s.error) + ')</span>' : ' (' + s.files.toLocaleString() + ' files)') + '</div>';
+        });
+        if (data.estimated_duration) {
+          html += '<div style="font-size:0.75rem;color:var(--text-dim);margin-top:6px;">Estimated time: ' + esc(data.estimated_duration) + '<br><span style="font-size:0.7rem;opacity:0.7;">Actual time depends on network speed</span></div>';
+        }
+        result.innerHTML = html;
+      } else {
+        result.innerHTML = 'Could not preview: ' + esc(data.msg || 'unknown error');
       }
-      if (data.estimated_duration) {
-        html += '<div style="font-size:0.75rem;color:var(--text-dim);">Estimated time: '
-          + esc(data.estimated_duration)
-          + '<br><span style="font-size:0.7rem;opacity:0.7;">Actual time depends on network speed</span></div>';
-      }
-      result.innerHTML = html;
-    } else {
-      result.innerHTML = 'Could not preview: ' + esc(data.msg || 'unknown error');
+    } catch(e) {
+      result.innerHTML = 'Preview failed. You can still start the transfer.';
     }
-  } catch(e) {
-    result.innerHTML = 'Preview failed. You can still start the transfer.';
+  } else {
+    // Single source preview
+    const srcPath = getSourcePath();
+    try {
+      const resp = await fetch('/api/wizard/preview', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        body: JSON.stringify({source: srcPath, dest: getDestPath(), source_type: sourceProvider, dest_type: destProvider})
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        const pathDisplay = srcPath ? truncatePath(srcPath, 60) : '';
+        let html = '<div style="margin-bottom:6px;"><strong>Ready to transfer: '
+          + esc(data.count.toLocaleString()) + ' files</strong> (' + esc(data.size) + ')</div>';
+        if (pathDisplay) {
+          html += '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px;">Source: ' + esc(pathDisplay) + '</div>';
+        }
+        if (data.estimated_duration) {
+          html += '<div style="font-size:0.75rem;color:var(--text-dim);">Estimated time: '
+            + esc(data.estimated_duration)
+            + '<br><span style="font-size:0.7rem;opacity:0.7;">Actual time depends on network speed</span></div>';
+        }
+        result.innerHTML = html;
+      } else {
+        result.innerHTML = 'Could not preview: ' + esc(data.msg || 'unknown error');
+      }
+    } catch(e) {
+      result.innerHTML = 'Preview failed. You can still start the transfer.';
+    }
   }
   btn.disabled = false;
   btn.textContent = 'Preview (see what will be copied)';
@@ -965,7 +1025,7 @@ async function startTransfer() {
   const safetyTimeout = setTimeout(() => {
     startTransfer._running = false;
     btn.disabled = false;
-    btn.textContent = 'Start Transfer';
+    btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
     showWizardError('Transfer may have started. Check the dashboard.');
   }, 30000);
 
@@ -984,39 +1044,76 @@ async function startTransfer() {
         return;
       }
     }
-    const src = getSourcePath();
+    const isMulti = multiSelectedPaths.length > 1;
     const dst = getDestPath();
-    if (!src || !dst) {
-      console.error('startTransfer: missing paths, src=' + src + ' dst=' + dst);
-      showWizardError('Please select both source and destination folders.');
+
+    if (isMulti) {
+      // Multi-select: build full paths
+      const paths = multiSelectedPaths.map(s => _getMultiSelectFullPath(s.path));
+      if (!dst) {
+        showWizardError('Please select a destination folder.');
+        clearTimeout(safetyTimeout);
+        startTransfer._running = false;
+        btn.disabled = false;
+        btn.textContent = 'Start All';
+        return;
+      }
+      const resp = await fetch('/api/wizard/start-multi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        body: JSON.stringify({
+          paths: paths,
+          dest: dst,
+          transfers: selectedSpeed,
+          excludes: excludeList,
+          source_type: sourceProvider === 'icloud' ? 'local' : sourceProvider,
+          dest_type: destProvider === 'icloud' ? 'local' : destProvider,
+          bw_limit: document.getElementById('bwLimit').value.trim(),
+          checksum: document.getElementById('useChecksum').checked,
+          fast_list: document.getElementById('useFastList').checked
+        })
+      });
       clearTimeout(safetyTimeout);
-      startTransfer._running = false;
-      btn.disabled = false;
-      btn.textContent = 'Start Transfer';
-      return;
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error('HTTP ' + resp.status + ': ' + errText);
+      }
+      var data = await resp.json();
+    } else {
+      // Single source
+      const src = getSourcePath();
+      if (!src || !dst) {
+        console.error('startTransfer: missing paths, src=' + src + ' dst=' + dst);
+        showWizardError('Please select both source and destination folders.');
+        clearTimeout(safetyTimeout);
+        startTransfer._running = false;
+        btn.disabled = false;
+        btn.textContent = 'Start Transfer';
+        return;
+      }
+      const resp = await fetch('/api/wizard/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
+        body: JSON.stringify({
+          source: src,
+          dest: dst,
+          transfers: selectedSpeed,
+          excludes: excludeList,
+          source_type: sourceProvider === 'icloud' ? 'local' : sourceProvider,
+          dest_type: destProvider === 'icloud' ? 'local' : destProvider,
+          bw_limit: document.getElementById('bwLimit').value.trim(),
+          checksum: document.getElementById('useChecksum').checked,
+          fast_list: document.getElementById('useFastList').checked
+        })
+      });
+      clearTimeout(safetyTimeout);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error('startTransfer: HTTP error', resp.status, errText);
+        throw new Error('HTTP ' + resp.status + ': ' + errText);
+      }
+      var data = await resp.json();
     }
-    const resp = await fetch('/api/wizard/start', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()},
-      body: JSON.stringify({
-        source: src,
-        dest: dst,
-        transfers: selectedSpeed,
-        excludes: excludeList,
-        source_type: sourceProvider === 'icloud' ? 'local' : sourceProvider,
-        dest_type: destProvider === 'icloud' ? 'local' : destProvider,
-        bw_limit: document.getElementById('bwLimit').value.trim(),
-        checksum: document.getElementById('useChecksum').checked,
-        fast_list: document.getElementById('useFastList').checked
-      })
-    });
-    clearTimeout(safetyTimeout);
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error('startTransfer: HTTP error', resp.status, errText);
-      throw new Error('HTTP ' + resp.status + ': ' + errText);
-    }
-    const data = await resp.json();
     if (data.ok) {
       // Save schedule if enabled
       const schedEnabled = document.getElementById('scheduleEnabled');
@@ -1044,7 +1141,7 @@ async function startTransfer() {
       console.error('startTransfer: server returned error:', data.msg);
       startTransfer._running = false;
       btn.disabled = false;
-      btn.textContent = 'Start Transfer';
+      btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
       showWizardError('Error: ' + (data.msg || 'Failed to start transfer'));
     }
   } catch(e) {
@@ -1052,7 +1149,7 @@ async function startTransfer() {
     clearTimeout(safetyTimeout);
     startTransfer._running = false;
     btn.disabled = false;
-    btn.textContent = 'Start Transfer';
+    btn.textContent = multiSelectedPaths.length > 1 ? 'Start All' : 'Start Transfer';
     showWizardError('Error starting transfer: ' + (e.message || 'Unknown error'));
   }
 }
@@ -1120,7 +1217,89 @@ function updateExcludePatterns() {
   document.getElementById('excludePatterns').value = names.join(', ');
 }
 
-// Folder browser for selective copy
+// Multi-select helpers
+function _getMultiSelectFullPath(subpath) {
+  let basePath;
+  if (sourceProvider === 'local' || sourceProvider === 'icloud') {
+    basePath = document.getElementById('sourcePathInput').value.trim();
+  } else {
+    basePath = sourceName + ':';
+  }
+  if (!subpath) return basePath;
+  return basePath + (basePath.endsWith(':') ? '' : '/') + subpath;
+}
+
+function isPathSelected(fullPath) {
+  return multiSelectedPaths.some(s => s.path === fullPath);
+}
+
+function togglePathSelection(fullPath, name) {
+  const idx = multiSelectedPaths.findIndex(s => s.path === fullPath);
+  if (idx >= 0) {
+    multiSelectedPaths.splice(idx, 1);
+  } else {
+    multiSelectedPaths.push({path: fullPath, name: name, isFolder: true});
+  }
+  updateMultiSelectCounter();
+}
+
+function updateMultiSelectCounter() {
+  const counter = document.getElementById('multiSelectCounter');
+  if (!counter) return;
+  if (multiSelectedPaths.length === 0) {
+    counter.style.display = 'none';
+    return;
+  }
+  counter.style.display = 'flex';
+  const txt = document.getElementById('multiSelectCountText');
+  if (txt) txt.textContent = multiSelectedPaths.length + ' item' + (multiSelectedPaths.length !== 1 ? 's' : '') + ' selected';
+  const continueBtn = document.getElementById('multiSelectContinue');
+  if (continueBtn) continueBtn.disabled = false;
+}
+
+function clearMultiSelect() {
+  multiSelectedPaths = [];
+  updateMultiSelectCounter();
+  // Uncheck all visible checkboxes
+  document.querySelectorAll('#browseFolders input[data-multisel]').forEach(cb => { cb.checked = false; });
+}
+
+function selectAllVisible() {
+  document.querySelectorAll('#browseFolders input[data-multisel]').forEach(cb => {
+    if (!cb.checked) {
+      cb.checked = true;
+      const fullPath = cb.dataset.multisel;
+      const name = cb.dataset.name;
+      if (!isPathSelected(fullPath)) {
+        multiSelectedPaths.push({path: fullPath, name: name, isFolder: true});
+      }
+    }
+  });
+  updateMultiSelectCounter();
+}
+
+function deselectAllVisible() {
+  document.querySelectorAll('#browseFolders input[data-multisel]').forEach(cb => {
+    if (cb.checked) {
+      cb.checked = false;
+      const fullPath = cb.dataset.multisel;
+      const idx = multiSelectedPaths.findIndex(s => s.path === fullPath);
+      if (idx >= 0) multiSelectedPaths.splice(idx, 1);
+    }
+  });
+  updateMultiSelectCounter();
+}
+
+function applyMultiSelect() {
+  if (multiSelectedPaths.length === 1) {
+    // Single item: backward compatible - set subfolder
+    document.getElementById('sourceSubfolder').value = multiSelectedPaths[0].path;
+  }
+  // Multi or single, proceed to next step
+  goTo(5);
+}
+
+// Folder browser for selective copy (with multi-select checkboxes)
 async function browseSource(subpath) {
   const container = document.getElementById('browseFolders');
   const btn = document.getElementById('browseSourceBtn');
@@ -1169,6 +1348,26 @@ async function browseSource(subpath) {
         return;
       }
       container.innerHTML = '';
+      // Header with Select All / Deselect All
+      const headerDiv = document.createElement('div');
+      headerDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:4px 8px 8px;border-bottom:1px solid var(--card-border);margin-bottom:4px;';
+      const headerLeft = document.createElement('div');
+      headerLeft.style.cssText = 'display:flex;gap:8px;';
+      const selAllBtn = document.createElement('button');
+      selAllBtn.type = 'button';
+      selAllBtn.style.cssText = 'padding:3px 10px;border-radius:4px;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);cursor:pointer;font-size:0.7rem;';
+      selAllBtn.textContent = 'Select All';
+      selAllBtn.addEventListener('click', selectAllVisible);
+      const deselAllBtn = document.createElement('button');
+      deselAllBtn.type = 'button';
+      deselAllBtn.style.cssText = 'padding:3px 10px;border-radius:4px;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);cursor:pointer;font-size:0.7rem;';
+      deselAllBtn.textContent = 'Deselect All';
+      deselAllBtn.addEventListener('click', deselectAllVisible);
+      headerLeft.appendChild(selAllBtn);
+      headerLeft.appendChild(deselAllBtn);
+      headerDiv.appendChild(headerLeft);
+      container.appendChild(headerDiv);
+
       if (subpath) {
         const parent = subpath.includes('/') ? subpath.substring(0, subpath.lastIndexOf('/')) : '';
         const backDiv = document.createElement('div');
@@ -1180,11 +1379,25 @@ async function browseSource(subpath) {
       data.folders.forEach(f => {
         const fullPath = subpath ? subpath + '/' + f.name : f.name;
         const row = document.createElement('div');
-        row.style.cssText = 'padding:6px 8px;cursor:pointer;font-size:0.8rem;color:var(--text);border-radius:6px;display:flex;align-items:center;gap:6px;justify-content:space-between;';
-        row.addEventListener('mouseover', function() { this.style.background = 'var(--card-hover)'; });
-        row.addEventListener('mouseout', function() { this.style.background = 'transparent'; });
+        const isSelected = isPathSelected(fullPath);
+        row.style.cssText = 'padding:6px 8px;font-size:0.8rem;color:var(--text);border-radius:6px;display:flex;align-items:center;gap:6px;' + (isSelected ? 'background:rgba(99,102,241,0.08);' : '');
+        row.addEventListener('mouseover', function() { if (!isPathSelected(fullPath)) this.style.background = 'var(--card-hover)'; });
+        row.addEventListener('mouseout', function() { this.style.background = isPathSelected(fullPath) ? 'rgba(99,102,241,0.08)' : 'transparent'; });
+        // Checkbox
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = isSelected;
+        cb.dataset.multisel = fullPath;
+        cb.dataset.name = f.name;
+        cb.style.cssText = 'accent-color:var(--primary);width:16px;height:16px;cursor:pointer;flex-shrink:0;';
+        cb.addEventListener('change', function(e) {
+          e.stopPropagation();
+          togglePathSelection(fullPath, f.name);
+          row.style.background = this.checked ? 'rgba(99,102,241,0.08)' : 'transparent';
+        });
+        row.appendChild(cb);
         const nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;min-width:0;';
+        nameSpan.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;min-width:0;cursor:pointer;';
         nameSpan.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="var(--blue)" opacity="0.7"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>';
         const nameText = document.createElement('span');
         nameText.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
@@ -1192,11 +1405,6 @@ async function browseSource(subpath) {
         nameSpan.appendChild(nameText);
         nameSpan.addEventListener('click', () => browseSource(fullPath));
         row.appendChild(nameSpan);
-        const selectBtn = document.createElement('button');
-        selectBtn.style.cssText = 'padding:2px 8px;border-radius:4px;border:1px solid var(--card-border);background:var(--card);color:var(--text-dim);cursor:pointer;font-size:0.7rem;flex-shrink:0;';
-        selectBtn.textContent = 'Select';
-        selectBtn.addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('sourceSubfolder').value = fullPath; });
-        row.appendChild(selectBtn);
         container.appendChild(row);
       });
     } else {

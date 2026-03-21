@@ -265,4 +265,6 @@
   .wizard-title { font-size: 1.6rem; }
   .wizard-subtitle { font-size: 0.9rem; margin-bottom: 24px; }
   .wizard-card { padding: 24px 20px; }
+  #multiSelectCounter { flex-direction: column; gap: 8px; align-items: stretch; }
+  #multiSelectCounter > div { justify-content: center; }
 }
