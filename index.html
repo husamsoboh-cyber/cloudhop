@@ -301,84 +301,6 @@ nav .nav-links .nav-cta:hover { background: rgba(255,255,255,0.08); border-color
 .screen-dot:first-child { background: rgba(255,87,87,0.6); }
 .screen-dot:nth-child(2) { background: rgba(255,189,46,0.6); }
 .screen-dot:nth-child(3) { background: rgba(39,201,63,0.6); }
-.screen-body {
-  padding: 32px;
-  min-height: 380px;
-  display: flex;
-  gap: 24px;
-}
-.screen-sidebar {
-  width: 200px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.screen-sidebar-item {
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-dim);
-  display: flex; align-items: center; gap: 10px;
-}
-.screen-sidebar-item.active {
-  background: rgba(99,102,241,0.1);
-  color: var(--indigo);
-}
-.screen-sidebar-icon {
-  width: 18px; height: 18px;
-  border-radius: 4px;
-  background: rgba(255,255,255,0.06);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px;
-}
-.screen-sidebar-item.active .screen-sidebar-icon {
-  background: rgba(99,102,241,0.2);
-}
-.screen-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.screen-transfer {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.02);
-  border: 1px solid var(--border);
-}
-.screen-cloud-icon {
-  width: 36px; height: 36px;
-  border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 600;
-  flex-shrink: 0;
-}
-.screen-cloud-icon.gdrive { background: rgba(66,133,244,0.15); color: #4285f4; }
-.screen-cloud-icon.s3 { background: rgba(255,153,0,0.15); color: #ff9900; }
-.screen-cloud-icon.drop { background: rgba(0,97,255,0.15); color: #0061ff; }
-.screen-cloud-icon.b2 { background: rgba(227,50,45,0.15); color: #e3322d; }
-.screen-transfer-arrow {
-  color: var(--text-dim); font-size: 14px; flex-shrink: 0;
-}
-.screen-transfer-info { flex: 1; }
-.screen-transfer-name { font-size: 13px; font-weight: 600; color: var(--text-bright); }
-.screen-transfer-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-.screen-transfer-progress {
-  width: 100px; height: 4px;
-  border-radius: 2px;
-  background: rgba(255,255,255,0.06);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.screen-transfer-progress-bar {
-  height: 100%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--indigo), var(--cyan));
-}
 
 /* ════════════════════════════════════════════
    Features Section
@@ -697,8 +619,6 @@ footer {
    ════════════════════════════════════════════ */
 @media (max-width: 768px) {
   .features-grid { grid-template-columns: 1fr; }
-  .screen-sidebar { display: none; }
-  .screen-body { padding: 20px; }
   .hero-buttons { flex-direction: column; align-items: center; }
   .footer-inner { flex-direction: column; gap: 16px; text-align: center; }
   .nav-hamburger { display: block; }
@@ -742,7 +662,7 @@ footer {
       <a href="#how-it-works">How it works</a>
       <a href="#privacy">Privacy</a>
       <a href="https://github.com/husamsoboh-cyber/cloudhop" target="_blank">GitHub</a>
-      <a href="https://buymeacoffee.com/husamsoboh" target="_blank" style="color:#ffdd00;">Donate</a>
+      <a href="https://github.com/sponsors/husamsoboh-cyber" target="_blank" style="color:#ea4aaa;">Support</a>
       <a href="#download" class="nav-cta">Download</a>
     </div>
   </div>
@@ -771,13 +691,14 @@ footer {
     <div class="hero-buttons">
       <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/latest" class="btn-primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M17.13 12c-.5 3.5-2 5.5-5.13 8-3.13-2.5-4.63-4.5-5.13-8h3.13V7h4v5h3.13z"/></svg>
-        Download for Mac (~37 MB)
+        Download for Mac (~34 MB)
       </a>
       <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/latest" class="btn-ghost">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
         Windows (~33 MB)
       </a>
       <a href="https://pypi.org/project/cloudhop/" class="btn-code" target="_blank">$ pip install cloudhop</a>
+      <a href="https://github.com/husamsoboh-cyber/cloudhop#download--install" class="btn-code" target="_blank">$ brew install cloudhop</a>
     </div>
   </div>
 </section>
@@ -785,69 +706,15 @@ footer {
 <!-- ── Floating Screenshot ── -->
 <section class="screenshot-section">
   <div class="container">
-    <div class="floating-screen">
+    <div class="floating-screen" style="padding:0;min-height:0;">
       <div class="screen-bar">
         <div class="screen-dot"></div>
         <div class="screen-dot"></div>
         <div class="screen-dot"></div>
       </div>
-      <div class="screen-body">
-        <div class="screen-sidebar">
-          <div class="screen-sidebar-item active">
-            <div class="screen-sidebar-icon">T</div>
-            Transfers
-          </div>
-          <div class="screen-sidebar-item">
-            <div class="screen-sidebar-icon">+</div>
-            New Transfer
-          </div>
-          <div class="screen-sidebar-item">
-            <div class="screen-sidebar-icon">S</div>
-            Settings
-          </div>
-        </div>
-        <div class="screen-main">
-          <!-- Transfer 1 -->
-          <div class="screen-transfer">
-            <div class="screen-cloud-icon gdrive">G</div>
-            <div class="screen-transfer-arrow">&rarr;</div>
-            <div class="screen-cloud-icon s3">S3</div>
-            <div class="screen-transfer-info">
-              <div class="screen-transfer-name">Photos Backup</div>
-              <div class="screen-transfer-meta">14.2 GB / 18.7 GB &bull; 42 MB/s</div>
-            </div>
-            <div class="screen-transfer-progress">
-              <div class="screen-transfer-progress-bar" style="width:76%"></div>
-            </div>
-          </div>
-          <!-- Transfer 2 -->
-          <div class="screen-transfer">
-            <div class="screen-cloud-icon drop">D</div>
-            <div class="screen-transfer-arrow">&rarr;</div>
-            <div class="screen-cloud-icon b2">B2</div>
-            <div class="screen-transfer-info">
-              <div class="screen-transfer-name">Documents Archive</div>
-              <div class="screen-transfer-meta">3.1 GB / 3.1 GB &bull; Complete</div>
-            </div>
-            <div class="screen-transfer-progress">
-              <div class="screen-transfer-progress-bar" style="width:100%"></div>
-            </div>
-          </div>
-          <!-- Transfer 3 -->
-          <div class="screen-transfer">
-            <div class="screen-cloud-icon s3">S3</div>
-            <div class="screen-transfer-arrow">&rarr;</div>
-            <div class="screen-cloud-icon gdrive">G</div>
-            <div class="screen-transfer-info">
-              <div class="screen-transfer-name">Project Assets</div>
-              <div class="screen-transfer-meta">Queued &bull; 6.4 GB</div>
-            </div>
-            <div class="screen-transfer-progress">
-              <div class="screen-transfer-progress-bar" style="width:0%"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <img src="https://raw.githubusercontent.com/husamsoboh-cyber/cloudhop/main/screenshots/dashboard.png"
+           alt="CloudHop Dashboard showing real-time transfer progress"
+           style="width:100%;display:block;border-radius:0 0 15px 15px;">
     </div>
   </div>
 </section>
@@ -887,7 +754,22 @@ footer {
       <div class="feature-card">
         <div class="feature-icon rose">&#x1f3a8;</div>
         <h3>Beautiful UI</h3>
-        <p>A native desktop app that feels right at home on macOS, Windows, and Linux.</p>
+        <p>A clean desktop app with dark mode, live charts, and real-time progress tracking.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon cyan">&#x1f553;</div>
+        <h3>Schedule & Throttle</h3>
+        <p>Set transfer windows, day-of-week rules, and bandwidth limits. Transfers pause and resume automatically.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon purple">&#x1f4cb;</div>
+        <h3>Queue & Presets</h3>
+        <p>Queue multiple transfers, save configurations as presets, and copy one source to multiple destinations.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon green">&#x2709;</div>
+        <h3>Email Alerts</h3>
+        <p>Get notified by email when transfers complete or fail. Configure SMTP in the built-in settings page.</p>
       </div>
     </div>
   </div>
@@ -907,7 +789,7 @@ footer {
         </div>
         <div class="timeline-content">
           <h3>Install CloudHop</h3>
-          <p>Download the app or install via pip. CloudHop bundles rclone automatically -- nothing else to configure.</p>
+          <p>Download the app or install via pip. The Mac and Windows apps include rclone. The pip version installs it for you on first run.</p>
         </div>
       </div>
       <div class="timeline-step">
@@ -917,7 +799,7 @@ footer {
         </div>
         <div class="timeline-content">
           <h3>Connect your clouds</h3>
-          <p>Add any provider with a guided setup. OAuth flows open in your browser; tokens are stored locally, encrypted.</p>
+          <p>Add any provider with a guided setup. OAuth flows open in your browser; tokens are stored locally on your machine.</p>
         </div>
       </div>
       <div class="timeline-step">
@@ -968,14 +850,15 @@ footer {
   <div class="container">
     <div class="download-card">
       <h2>Ready to take control<br>of your cloud files?</h2>
-      <p>Free, open source, and private. Available on macOS, Windows, and Linux.</p>
+      <p>Free, open source, and private. Available on macOS and Windows. Install via pip on any platform.</p>
       <div class="download-buttons">
         <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/latest" class="btn-primary">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for Mac (~37 MB)
+          Download for Mac (~34 MB)
         </a>
         <a href="https://github.com/husamsoboh-cyber/cloudhop/releases/latest" class="btn-ghost">Windows (~33 MB)</a>
         <a href="https://pypi.org/project/cloudhop/" class="btn-code" target="_blank">$ pip install cloudhop</a>
+        <a href="https://github.com/husamsoboh-cyber/cloudhop#download--install" class="btn-code" target="_blank">$ brew install cloudhop</a>
       </div>
     </div>
   </div>
