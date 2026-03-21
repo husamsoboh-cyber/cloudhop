@@ -83,6 +83,50 @@ _csrf_lock = threading.Lock()
 CSRF_TOKEN_LIFETIME = 86400  # 24 hours
 _MAX_CSRF_TOKENS = 100
 
+_PROVIDER_SPEEDS_MBS = {
+    "local": 100,
+    "sftp": 100,
+    "drive": 10,
+    "onedrive": 10,
+    "protondrive": 3,
+    "s3": 20,
+    "b2": 20,
+}
+
+
+def _estimate_duration(
+    size_bytes: int, source_type: str, dest_type: str, bw_limit_str: str
+) -> tuple:
+    """Return (human_string, seconds, speed_bytes_per_sec) estimate."""
+    if bw_limit_str:
+        try:
+            bw_val = float(re.sub(r"[^0-9.]", "", bw_limit_str))
+            speed_est = bw_val * 1024 * 1024
+        except (ValueError, TypeError):
+            speed_est = 10 * 1024 * 1024
+    else:
+        src_mbs = _PROVIDER_SPEEDS_MBS.get(source_type, 10)
+        dst_mbs = _PROVIDER_SPEEDS_MBS.get(dest_type, 10)
+        speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
+    est_sec = size_bytes / speed_est if speed_est > 0 else 0
+    if est_sec < 60:
+        est_dur = "less than a minute"
+    elif est_sec < 3600:
+        est_dur = f"~{int(est_sec / 60)} minutes"
+    elif est_sec < 86400:
+        eh = int(est_sec / 3600)
+        em = int((est_sec % 3600) / 60)
+        est_dur = f"~{eh} hour{'s' if eh != 1 else ''}"
+        if em > 0:
+            est_dur += f" {em} minutes"
+    else:
+        ed = int(est_sec / 86400)
+        eh = int((est_sec % 86400) / 3600)
+        est_dur = f"~{ed} day{'s' if ed != 1 else ''}"
+        if eh > 0:
+            est_dur += f" {eh} hour{'s' if eh != 1 else ''}"
+    return est_dur, int(est_sec), speed_est
+
 
 def generate_csrf_token() -> str:
     """Generate a new CSRF token, store it with expiry, and clean up stale tokens."""
@@ -240,6 +284,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_types.get(ext, "text/plain"))
         size = os.path.getsize(filepath)
         self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         with open(filepath, "rb") as f:
             self.wfile.write(f.read())
@@ -436,13 +481,13 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(history)
         elif path == "/favicon.ico":
             self._serve_static("favicon.svg")
-        elif self.path.startswith("/static/"):
-            self._serve_static(self.path[8:])  # strip '/static/'
+        elif path.startswith("/static/"):
+            self._serve_static(path[8:])  # strip '/static/'
         elif path == "/dashboard":
-            html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+            html = render("dashboard.html", PORT=port)
             self._send_html(html)
         elif path == "/wizard":
-            html = render("wizard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+            html = render("wizard.html", PORT=port)
             self._send_html(html)
         elif path == "/api/presets":
             self._send_json({"presets": list_presets()})
@@ -459,14 +504,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/settings":
             self._send_json(load_settings())
         elif path == "/settings":
-            html = render("settings.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+            html = render("settings.html", PORT=port)
             self._send_html(html)
         elif path == "/":
             if self.manager.is_rclone_running() or self.manager.transfer_active:
-                html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+                html = render("dashboard.html", PORT=port)
                 self._send_html(html)
             else:
-                html = render("wizard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
+                html = render("wizard.html", PORT=port)
                 self._send_html(html)
         else:
             self._send_404()
@@ -819,47 +864,13 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                         else:
                             size_str = f"{size_bytes / 1024:.0f} KiB"
 
-                        # B2: Estimate transfer duration based on provider speeds
+                        # Estimate transfer duration based on provider speeds
                         source_type = body.get("source_type", "")
                         dest_type = body.get("dest_type", "")
                         bw_limit_str = body.get("bw_limit", "")
-                        _PROVIDER_SPEEDS_MBS = {
-                            "local": 100,
-                            "sftp": 100,
-                            "drive": 10,
-                            "onedrive": 10,
-                            "protondrive": 3,
-                            "s3": 20,
-                            "b2": 20,
-                        }
-                        if bw_limit_str:
-                            try:
-                                bw_val = float(re.sub(r"[^0-9.]", "", bw_limit_str))
-                                speed_est = bw_val * 1024 * 1024
-                            except (ValueError, TypeError):
-                                speed_est = 10 * 1024 * 1024
-                        else:
-                            # Use the slower side as the bottleneck
-                            src_mbs = _PROVIDER_SPEEDS_MBS.get(source_type, 10)
-                            dst_mbs = _PROVIDER_SPEEDS_MBS.get(dest_type, 10)
-                            speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
-                        est_sec = size_bytes / speed_est if speed_est > 0 else 0
-                        if est_sec < 60:
-                            est_dur = "less than a minute"
-                        elif est_sec < 3600:
-                            est_dur = f"~{int(est_sec / 60)} minutes"
-                        elif est_sec < 86400:
-                            eh = int(est_sec / 3600)
-                            em = int((est_sec % 3600) / 60)
-                            est_dur = f"~{eh} hour{'s' if eh != 1 else ''}"
-                            if em > 0:
-                                est_dur += f" {em} minutes"
-                        else:
-                            ed = int(est_sec / 86400)
-                            eh = int((est_sec % 86400) / 3600)
-                            est_dur = f"~{ed} day{'s' if ed != 1 else ''}"
-                            if eh > 0:
-                                est_dur += f" {eh} hour{'s' if eh != 1 else ''}"
+                        est_dur, est_sec, speed_est = _estimate_duration(
+                            size_bytes, source_type, dest_type, bw_limit_str
+                        )
 
                         file_count = data.get("count", 0)
                         speed_label = f"{speed_est / (1024 * 1024):.0f} MB/s"
@@ -945,42 +956,9 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             else:
                 size_str = f"{total_bytes / 1024:.0f} KiB"
             # ETA estimate
-            _PROVIDER_SPEEDS_MBS = {
-                "local": 100,
-                "sftp": 100,
-                "drive": 10,
-                "onedrive": 10,
-                "protondrive": 3,
-                "s3": 20,
-                "b2": 20,
-            }
-            if bw_limit_str:
-                try:
-                    bw_val = float(re.sub(r"[^0-9.]", "", bw_limit_str))
-                    speed_est = bw_val * 1024 * 1024
-                except (ValueError, TypeError):
-                    speed_est = 10 * 1024 * 1024
-            else:
-                src_mbs = _PROVIDER_SPEEDS_MBS.get(source_type, 10)
-                dst_mbs = _PROVIDER_SPEEDS_MBS.get(dest_type, 10)
-                speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
-            est_sec = total_bytes / speed_est if speed_est > 0 else 0
-            if est_sec < 60:
-                est_dur = "less than a minute"
-            elif est_sec < 3600:
-                est_dur = f"~{int(est_sec / 60)} minutes"
-            elif est_sec < 86400:
-                eh = int(est_sec / 3600)
-                em = int((est_sec % 3600) / 60)
-                est_dur = f"~{eh} hour{'s' if eh != 1 else ''}"
-                if em > 0:
-                    est_dur += f" {em} minutes"
-            else:
-                ed = int(est_sec / 86400)
-                eh = int((est_sec % 86400) / 3600)
-                est_dur = f"~{ed} day{'s' if ed != 1 else ''}"
-                if eh > 0:
-                    est_dur += f" {eh} hour{'s' if eh != 1 else ''}"
+            est_dur, est_sec, speed_est = _estimate_duration(
+                total_bytes, source_type, dest_type, bw_limit_str
+            )
             logger.info(
                 "Multi-select: %d items selected, total %d files, %s",
                 len(paths),
