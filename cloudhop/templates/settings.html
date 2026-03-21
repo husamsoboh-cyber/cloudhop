@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudHop Settings</title>
+<script>(function(){var t=localStorage.getItem('cloudhop-theme');if(t)document.documentElement.setAttribute('data-theme',t);})()</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/settings.css">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+</head>
+<body>
+
+<header class="settings-header">
+  <div class="header-left">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 64 64" fill="none">
+        <path d="M48 28c0-8.8-7.2-16-16-16-6.5 0-12.1 3.9-14.6 9.5C16.5 21.2 15.8 21 15 21c-3.3 0-6 2.7-6 6 0 .4 0 .8.1 1.1C5.5 29.5 3 33.2 3 37.5 3 43 7.5 47.5 13 47.5h35c4.4 0 8-3.6 8-8s-3.6-8-8-8c-.3 0-.7 0-1 .1.6-1.1 1-2.3 1-3.6z" fill="#6366f1"/>
+        <path d="M22 36h20M38 31l5 5-5 5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <span class="header-title">Settings</span>
+  </div>
+  <div class="header-right">
+    <a href="/dashboard" class="back-link">Back to Dashboard</a>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle dark/light mode">
+      <svg id="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg id="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="settings-main">
+  <div class="settings-card">
+    <h2 class="section-title">Email Notifications</h2>
+
+    <div class="form-group toggle-row">
+      <label class="toggle-label" for="emailEnabled">Enable email notifications</label>
+      <label class="toggle-switch">
+        <input type="checkbox" id="emailEnabled" aria-label="Enable email notifications">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <fieldset id="emailFields" disabled>
+      <div class="form-group">
+        <label for="smtpHost">SMTP Host</label>
+        <input type="text" id="smtpHost" class="form-input" placeholder="smtp.gmail.com" aria-label="SMTP Host">
+      </div>
+      <div class="form-group">
+        <label for="smtpPort">SMTP Port</label>
+        <input type="number" id="smtpPort" class="form-input" value="587" aria-label="SMTP Port">
+      </div>
+      <div class="form-group toggle-row">
+        <label for="smtpTls">Use TLS</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="smtpTls" checked aria-label="Use TLS">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="form-group">
+        <label for="emailFrom">From Email</label>
+        <input type="email" id="emailFrom" class="form-input" placeholder="you@gmail.com" aria-label="From Email">
+      </div>
+      <div class="form-group">
+        <label for="emailTo">To Email</label>
+        <input type="email" id="emailTo" class="form-input" placeholder="alerts@gmail.com" aria-label="To Email">
+      </div>
+      <div class="form-group">
+        <label for="smtpUsername">SMTP Username</label>
+        <input type="text" id="smtpUsername" class="form-input" placeholder="you@gmail.com" aria-label="SMTP Username">
+      </div>
+      <div class="form-group">
+        <label for="smtpPassword">SMTP Password</label>
+        <input type="password" id="smtpPassword" class="form-input" placeholder="Enter to change" aria-label="SMTP Password">
+      </div>
+      <div class="form-group checkbox-row">
+        <label><input type="checkbox" id="onComplete" checked> Notify on completion</label>
+        <label><input type="checkbox" id="onFailure" checked> Notify on failure</label>
+      </div>
+      <div class="btn-row">
+        <button type="button" id="btnTest" class="btn btn-secondary">Send Test Email</button>
+        <button type="button" id="btnSave" class="btn btn-primary">Save Settings</button>
+      </div>
+    </fieldset>
+
+    <div id="statusMsg" class="status-msg" style="display:none;"></div>
+  </div>
+
+  <div class="support-card">
+    <h3 class="support-title">Support CloudHop</h3>
+    <p class="support-text">CloudHop is free and open source. If it saves you time, consider supporting development.</p>
+    <div class="support-links">
+      <a href="https://github.com/sponsors/husamsoboh-cyber" target="_blank" rel="noopener noreferrer" class="support-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        Sponsor on GitHub
+      </a>
+      <a href="https://buymeacoffee.com/husamsoboh" target="_blank" rel="noopener noreferrer" class="support-link">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+        Buy Me a Coffee
+      </a>
+    </div>
+  </div>
+</main>
+
+<span class="version" style="font-size:11px;opacity:0.4;position:fixed;bottom:8px;right:12px;pointer-events:none;z-index:1;">v__VERSION__</span>
+<script src="/static/settings.js"></script>
+</body>
+</html>

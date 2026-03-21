@@ -760,7 +760,6 @@ class TestSettingsAPI:
         status, body = _fetch_raw(_post(port, "/api/settings", {}, csrf=None))
         assert status == 403
 
-    @pytest.mark.skip(reason="settings.html created in prompt 2/3")
     def test_get_settings_page_html(self, server_fixture):
         port = server_fixture["port"]
         status, body = _fetch_raw(_get(port, "/settings"))
