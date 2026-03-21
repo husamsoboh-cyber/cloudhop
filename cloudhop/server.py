@@ -304,11 +304,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": False, "msg": "Server not ready"}, 503)
             return
 
+        # Strip query string for route matching
+        path = self.path.split("?")[0]
+
         port = self.actual_port
 
-        if self.path == "/api/status":
+        if path == "/api/status":
             self._send_json(self.manager.parse_current())
-        elif self.path == "/api/check-update":
+        elif path == "/api/check-update":
             from . import __version__
 
             try:
@@ -340,7 +343,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                         "update_available": False,
                     }
                 )
-        elif self.path == "/api/wizard/status":
+        elif path == "/api/wizard/status":
             self._send_json(
                 {
                     "rclone_installed": find_rclone() is not None,
@@ -348,7 +351,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     "home_dir": os.path.expanduser("~"),
                 }
             )
-        elif self.path == "/api/error-log":
+        elif path == "/api/error-log":
             from . import __version__
 
             home = os.path.expanduser("~")
@@ -388,9 +391,9 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     "errors": lines[-50:],
                 }
             )
-        elif self.path == "/api/queue":
+        elif path == "/api/queue":
             self._send_json({"queue": self.manager.queue_list()})
-        elif self.path == "/api/schedule":
+        elif path == "/api/schedule":
             with self.manager.state_lock:
                 schedule = dict(self.manager.state.get("schedule", {}))
             if hasattr(self.manager, "is_in_schedule_window"):
@@ -398,7 +401,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             else:
                 schedule["in_window"] = True
             self._send_json(schedule)
-        elif self.path == "/api/history":
+        elif path == "/api/history":
             from .utils import fmt_bytes
 
             history = []
@@ -431,20 +434,20 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     except Exception:
                         pass
             self._send_json(history)
-        elif self.path == "/favicon.ico":
+        elif path == "/favicon.ico":
             self._serve_static("favicon.svg")
         elif self.path.startswith("/static/"):
             self._serve_static(self.path[8:])  # strip '/static/'
-        elif self.path == "/dashboard":
+        elif path == "/dashboard":
             html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
             self._send_html(html)
-        elif self.path == "/wizard":
+        elif path == "/wizard":
             html = render("wizard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
             self._send_html(html)
-        elif self.path == "/api/presets":
+        elif path == "/api/presets":
             self._send_json({"presets": list_presets()})
-        elif self.path.startswith("/api/presets/"):
-            preset_id = self.path[len("/api/presets/") :]
+        elif path.startswith("/api/presets/"):
+            preset_id = path[len("/api/presets/") :]
             if not re.match(r"^[0-9a-f]{16}$", preset_id):
                 self._send_json({"ok": False, "msg": "Invalid preset ID"}, 400)
                 return
@@ -453,12 +456,12 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Preset not found"}, 404)
             else:
                 self._send_json(preset)
-        elif self.path == "/api/settings":
+        elif path == "/api/settings":
             self._send_json(load_settings())
-        elif self.path == "/settings":
+        elif path == "/settings":
             html = render("settings.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
             self._send_html(html)
-        elif self.path == "/":
+        elif path == "/":
             if self.manager.is_rclone_running() or self.manager.transfer_active:
                 html = render("dashboard.html", CSRF_TOKEN=CSRF_TOKEN, PORT=port)
                 self._send_html(html)
@@ -479,13 +482,16 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_csrf():
             return
 
-        if self.path == "/api/pause":
+        # Strip query string for route matching
+        path = self.path.split("?")[0]
+
+        if path == "/api/pause":
             self._send_json(self.manager.pause())
-        elif self.path == "/api/resume":
+        elif path == "/api/resume":
             self._send_json(self.manager.resume())
-        elif self.path == "/api/verify":
+        elif path == "/api/verify":
             self._send_json(self.manager.verify_transfer())
-        elif self.path == "/api/wizard/check-rclone":
+        elif path == "/api/wizard/check-rclone":
             path = find_rclone()
             if path:
                 self._send_json({"ok": True, "path": path})
@@ -496,7 +502,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                         "msg": "rclone not found. Please install from https://rclone.org/install/",
                     }
                 )
-        elif self.path == "/api/wizard/install-rclone":
+        elif path == "/api/wizard/install-rclone":
             # Check if already installed
             path = find_rclone()
             if path:
@@ -662,7 +668,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                         "msg": "Installation failed. Please install manually from https://rclone.org/install/",
                     }
                 )
-        elif self.path == "/api/wizard/configure-remote":
+        elif path == "/api/wizard/configure-remote":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -702,14 +708,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     _configure_lock.release()
                     logger.info("configure-remote: released lock for remote '%s'", name)
                 self._send_json(result)
-        elif self.path == "/api/wizard/check-remote":
+        elif path == "/api/wizard/check-remote":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             name = body.get("name", "")
             self._send_json({"configured": remote_exists(name)})
-        elif self.path == "/api/wizard/validate-path":
+        elif path == "/api/wizard/validate-path":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -735,7 +741,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             is_dir = os.path.isdir(real_path) if exists else False
             logger.info("Path validated: %s (exists=%s, is_dir=%s)", path, exists, is_dir)
             self._send_json({"exists": exists, "is_directory": is_dir})
-        elif self.path == "/api/wizard/browse":
+        elif path == "/api/wizard/browse":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -780,7 +786,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "msg": "Folder listing timed out"})
             except Exception as e:
                 self._send_json({"ok": False, "msg": str(e)})
-        elif self.path == "/api/wizard/preview":
+        elif path == "/api/wizard/preview":
             body = self._read_body()
             if body is not None:
                 source = body.get("source", "")
@@ -882,7 +888,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     self._send_json({"ok": False, "msg": str(e)})
             else:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
-        elif self.path == "/api/wizard/preview-multi":
+        elif path == "/api/wizard/preview-multi":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -994,7 +1000,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                     "estimated_disclaimer": "Estimate based on typical speeds. Actual time may vary.",
                 }
             )
-        elif self.path == "/api/schedule":
+        elif path == "/api/schedule":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1025,7 +1031,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 }
                 self.manager.save_state()
             self._send_json({"ok": True})
-        elif self.path == "/api/wizard/start":
+        elif path == "/api/wizard/start":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1039,7 +1045,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             else:
                 logger.error("Transfer failed to start: %s", result.get("msg"))
             self._send_json(result)
-        elif self.path == "/api/wizard/start-multi":
+        elif path == "/api/wizard/start-multi":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1107,7 +1113,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             result["queued"] = queue_ids
             result["total_paths"] = len(paths)
             self._send_json(result)
-        elif self.path == "/api/wizard/start-multi-dest":
+        elif path == "/api/wizard/start-multi-dest":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1176,7 +1182,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             result["queued"] = queue_ids
             result["total_destinations"] = len(destinations)
             self._send_json(result)
-        elif self.path == "/api/bwlimit":
+        elif path == "/api/bwlimit":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1190,17 +1196,17 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                 return
             result = self.manager.set_bandwidth(limit)
             self._send_json(result)
-        elif self.path == "/api/queue/add":
+        elif path == "/api/queue/add":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             logger.info("Queue API: add transfer")
             self._send_json(self.manager.queue_add(body))
-        elif self.path == "/api/queue/start-next":
+        elif path == "/api/queue/start-next":
             logger.info("Queue API: start next")
             self._send_json(self.manager.queue_process_next())
-        elif self.path == "/api/presets":
+        elif path == "/api/presets":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1216,7 +1222,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             preset_id = self.path.split("/")[3]
             result = run_preset(preset_id, self.manager)
             self._send_json(result)
-        elif self.path == "/api/history/resume":
+        elif path == "/api/history/resume":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1260,14 +1266,14 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error("History resume error: %s", e)
                 self._send_json({"ok": False, "msg": "Failed to resume transfer"})
-        elif self.path == "/api/settings":
+        elif path == "/api/settings":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
                 return
             result = save_settings(body)
             self._send_json(result, 200 if result.get("ok") else 400)
-        elif self.path == "/api/settings/test-email":
+        elif path == "/api/settings/test-email":
             body = self._read_body()
             if body is None:
                 self._send_json({"ok": False, "msg": "Invalid request"}, 400)
@@ -1323,8 +1329,11 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_csrf():
             return
 
+        # Strip query string for route matching
+        path = self.path.split("?")[0]
+
         # DELETE /api/presets/<preset_id>
-        m = re.match(r"^/api/presets/([0-9a-f]{16})$", self.path)
+        m = re.match(r"^/api/presets/([0-9a-f]{16})$", path)
         if m:
             preset_id = m.group(1)
             if delete_preset(preset_id):
@@ -1334,7 +1343,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # DELETE /api/queue/<queue_id>
-        m = re.match(r"^/api/queue/([0-9a-f]{16})$", self.path)
+        m = re.match(r"^/api/queue/([0-9a-f]{16})$", path)
         if m:
             queue_id = m.group(1)
             logger.info("Queue API: remove %s", queue_id)
@@ -1356,8 +1365,11 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_csrf():
             return
 
+        # Strip query string for route matching
+        path = self.path.split("?")[0]
+
         # PUT /api/queue/<queue_id>/reorder
-        m = re.match(r"^/api/queue/([0-9a-f]{16})/reorder$", self.path)
+        m = re.match(r"^/api/queue/([0-9a-f]{16})/reorder$", path)
         if m:
             queue_id = m.group(1)
             body = self._read_body()

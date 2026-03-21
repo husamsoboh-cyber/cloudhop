@@ -1454,81 +1454,86 @@ async function resumeFromHistory(id) {
 
 // Demo mode: simulate a transfer in progress for preview purposes
 const _isDemo = new URLSearchParams(window.location.search).has('demo');
-let _demoPct = 0;
+let _demoPct = 67;
 let _demoInterval = null;
 
 function getDemoData() {
-  _demoPct = Math.min(_demoPct + 0.3 + Math.random() * 0.5, 100);
-  const spd = 15 + Math.random() * 30;
-  const transferred = _demoPct / 100 * 125 * 1024 * 1024 * 1024;
-  const total = 125 * 1024 * 1024 * 1024;
-  const files = Math.floor(_demoPct / 100 * 8420);
+  _demoPct = Math.min(_demoPct + 0.08 + Math.random() * 0.12, 99.5);
+  const spd = 28 + Math.random() * 12;
+  const totalGiB = 58.0;
+  const transferred = _demoPct / 100 * totalGiB;
+  const total = totalGiB * 1024 * 1024 * 1024;
+  const filesTotal = 3612;
+  const files = Math.floor(_demoPct / 100 * filesTotal);
+  const etaSec = Math.round((100 - _demoPct) / 100 * totalGiB * 1024 / spd);
+  const etaMin = Math.floor(etaSec / 60);
+  const etaStr = etaMin > 0 ? etaMin + 'm ' + (etaSec % 60) + 's' : etaSec + 's';
   return {
     global_pct: Math.round(_demoPct * 10) / 10,
-    global_transferred: (_demoPct / 100 * 125).toFixed(2) + ' GiB',
-    global_transferred_bytes: transferred,
-    global_total: '125.00 GiB',
+    global_transferred: transferred.toFixed(2) + ' GiB',
+    global_transferred_bytes: transferred * 1024 * 1024 * 1024,
+    global_total: totalGiB.toFixed(2) + ' GiB',
     global_total_bytes: total,
     global_files_done: files,
-    global_files_total: 8420,
-    global_files_pct: Math.round(files / 8420 * 100 * 10) / 10,
-    global_elapsed: '2h 15m',
-    global_elapsed_sec: 8100,
-    session_elapsed: '45m 30s',
-    session_elapsed_sec: 2730,
-    session_num: 3,
-    session_transferred: '42.5 GiB',
-    session_total: '50.0 GiB',
-    session_pct: 85,
+    global_files_total: filesTotal,
+    global_files_pct: Math.round(files / filesTotal * 100 * 10) / 10,
+    global_elapsed: '28m 15s',
+    global_elapsed_sec: 1695,
+    session_elapsed: '28m 15s',
+    session_elapsed_sec: 1695,
+    session_num: 1,
+    session_transferred: transferred.toFixed(2) + ' GiB',
+    session_total: totalGiB.toFixed(2) + ' GiB',
+    session_pct: Math.round(_demoPct * 10) / 10,
     speed: spd.toFixed(1) + ' MiB/s',
-    eta: Math.round((100 - _demoPct) / 0.4 * 5) + 's',
+    eta: etaStr,
     errors: 0,
     checks_done: 0,
     checks_total: 0,
-    listed: files * 2,
+    listed: filesTotal,
     finished: false,
     rclone_running: true,
-    transfer_label: 'OneDrive -> Google Drive',
+    transfer_label: 'Google Drive -> Dropbox',
     active: [
-      {name: 'Documents/Report-2026.pdf', pct: 78, size: '24.5MiB', speed: '12.3MiB/s', eta: '2s'},
-      {name: 'Photos/vacation-2025.zip', pct: 34, size: '1.2GiB', speed: '18.7MiB/s', eta: '45s'},
-      {name: 'Projects/backup.tar.gz', pct: 91, size: '890MiB', speed: '15.1MiB/s', eta: '5s'},
+      {name: 'Photos/IMG_4521.heic', pct: 82, size: '48.2MiB', speed: '11.4MiB/s', eta: '1s'},
+      {name: 'Documents/Budget-2026.xlsx', pct: 45, size: '8.7MiB', speed: '6.2MiB/s', eta: '3s'},
+      {name: 'Videos/birthday-party.mp4', pct: 12, size: '1.8GiB', speed: '18.3MiB/s', eta: '1m32s'},
+      {name: 'Work/presentation-final.pptx', pct: 94, size: '156MiB', speed: '9.8MiB/s', eta: '1s'},
     ],
     recent_files: [
-      {name: 'music/playlist.m3u', time: '14:32:01'},
-      {name: 'documents/notes.txt', time: '14:31:58'},
-      {name: 'photos/sunset.jpg', time: '14:31:55'},
+      {name: 'Photos/IMG_4520.heic', time: '14:32:01'},
+      {name: 'Documents/invoice-march.pdf', time: '14:31:58'},
+      {name: 'Photos/IMG_4519.heic', time: '14:31:55'},
+      {name: 'Music/playlist-summer.m3u', time: '14:31:52'},
+      {name: 'Documents/notes-meeting.txt', time: '14:31:48'},
     ],
     error_messages: [],
-    speed_history: Array.from({length: 100}, () => 10 + Math.random() * 25),
-    pct_history: Array.from({length: 100}, (_, i) => i),
-    all_file_types: {pdf: 120, jpg: 890, zip: 45, docx: 67, mp4: 23, txt: 340, png: 210},
+    speed_history: Array.from({length: 80}, () => 22 + Math.random() * 18),
+    pct_history: Array.from({length: 80}, (_, i) => i * 0.85),
+    all_file_types: {heic: 1240, pdf: 185, xlsx: 42, mp4: 18, pptx: 31, txt: 290, jpg: 680, png: 410, docx: 95, zip: 24},
     total_copied_count: files,
     sessions: [
-      {num: 1, start: '2026/03/19 22:00:00', end: '2026/03/20 01:30:00', transferred: '45.2 GiB', files: 3200, elapsed: '3h 30m', elapsed_sec: 12600},
-      {num: 2, start: '2026/03/20 08:00:00', end: '2026/03/20 10:15:00', transferred: '38.1 GiB', files: 2800, elapsed: '2h 15m', elapsed_sec: 8100},
-      {num: 3, start: '2026/03/20 14:00:00', end: '', transferred: '42.5 GiB', files: 2420, elapsed: '45m', elapsed_sec: 2700},
+      {num: 1, start: '2026/03/21 14:04:00', end: '', transferred: transferred.toFixed(2) + ' GiB', files: files, elapsed: '28m 15s', elapsed_sec: 1695},
     ],
-    downtimes: [
-      {after_session: 1, duration: '6h 30m', duration_sec: 23400, from: '2026/03/20 01:30:00', to: '2026/03/20 08:00:00'},
-      {after_session: 2, duration: '3h 45m', duration_sec: 13500, from: '2026/03/20 10:15:00', to: '2026/03/20 14:00:00'},
-    ],
-    wall_clock: '16h 45m',
-    uptime_pct: 51.2,
+    downtimes: [],
+    wall_clock: '28m 15s',
+    uptime_pct: 100,
     daily_stats: [
-      {day: '2026-03-19', bytes: 45.2 * 1024**3, gib: 45.2},
-      {day: '2026-03-20', bytes: 80.6 * 1024**3, gib: 80.6},
+      {day: '2026-03-21', bytes: transferred * 1024**3, gib: transferred},
     ],
   };
 }
 
 if (_isDemo) {
-  // Show demo banner
-  const banner = document.createElement('div');
-  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,var(--primary),var(--secondary));color:#fff;text-align:center;padding:8px;font-size:0.8rem;font-weight:600;z-index:200;';
-  banner.innerHTML = 'DEMO MODE - This is a simulated transfer preview. <a href="/dashboard" style="color:#fff;text-decoration:underline;margin-left:8px;">Exit demo</a>';
-  document.body.prepend(banner);
-  document.body.style.paddingTop = '36px';
+  const _cleanDemo = new URLSearchParams(window.location.search).has('clean');
+  if (!_cleanDemo) {
+    // Show demo banner
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,var(--primary),var(--secondary));color:#fff;text-align:center;padding:8px;font-size:0.8rem;font-weight:600;z-index:200;';
+    banner.innerHTML = 'DEMO MODE - This is a simulated transfer preview. <a href="/dashboard" style="color:#fff;text-decoration:underline;margin-left:8px;">Exit demo</a>';
+    document.body.prepend(banner);
+    document.body.style.paddingTop = '36px';
+  }
 }
 
 refresh();
