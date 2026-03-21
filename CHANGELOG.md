@@ -2,6 +2,19 @@
 
 All notable changes to CloudHop are documented here.
 
+## v0.11.0
+
+### New Features
+- **Sync Mode** - One-way sync (`rclone sync`) and two-way bisync (`rclone bisync`) with safety warnings for destructive operations
+- **Transfer Presets** - Save, manage, and re-run transfer configurations with one click
+- **Multi-Destination Transfers** - Copy one source to up to 5 cloud destinations simultaneously via queue
+- **Windows .exe Installer** - Single-file standalone executable built with PyInstaller via GitHub Actions
+- **Homebrew Formula** - Install with `brew tap husamsoboh-cyber/tap && brew install cloudhop`
+
+### Fixes
+- Windows CI: ETA smoothing tests handle `os.waitpid` platform differences
+- Stabilized flaky integration tests (server startup/shutdown race conditions)
+
 ## v0.9.11 (2026-03-20)
 
 ### Fixed
