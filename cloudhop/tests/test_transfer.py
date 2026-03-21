@@ -1514,7 +1514,7 @@ class TestETASmoothing:
         m = manager_with_log
         m._speed_ema = 0.0  # No history
         m.rclone_pid = 99999
-        with patch("os.waitpid", return_value=(0, 0)):
+        with patch("os.waitpid", return_value=(0, 0)), patch("os.kill"):
             result = m.parse_current()
         # After parsing FAKE_LOG, EMA should be set (not zero)
         assert m._speed_ema > 0
@@ -1556,7 +1556,7 @@ class TestETASmoothing:
             """)
             )
         m.rclone_pid = 99999
-        with patch("os.waitpid", return_value=(0, 0)):
+        with patch("os.waitpid", return_value=(0, 0)), patch("os.kill"):
             result = m.parse_current()
         assert result.get("smoothed_eta") == "Calculating..."
 

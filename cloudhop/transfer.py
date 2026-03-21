@@ -1615,10 +1615,10 @@ class TransferManager:
                             result["smoothed_eta_sec"] = 0
                         result["smoothed_speed"] = fmt_bytes(self._speed_ema) + "/s"
                         logger.debug(
-                            "ETA calc: raw_speed=%.1f, smoothed=%.1f, eta=%s",
+                            "EMA update: platform=%s, raw=%.1f, smoothed=%.1f",
+                            sys.platform,
                             speed_bytes_per_sec,
                             self._speed_ema,
-                            result.get("smoothed_eta", "N/A"),
                         )
             if self._speed_ema == 0 and not result.get("smoothed_eta"):
                 result["smoothed_eta"] = "Calculating..."
