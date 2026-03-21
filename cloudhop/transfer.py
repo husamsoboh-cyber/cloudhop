@@ -318,6 +318,13 @@ class TransferManager:
         self._speed_ema: float = 0.0
         self._ema_alpha: float = 0.3
 
+        # Rate limit auto-throttle tracking
+        self._rate_limit_timestamps: List[float] = []
+        self._original_transfers: int = 0
+        self._current_transfers: int = 0
+        self._throttle_active: bool = False
+        self._last_rate_limit_time: float = 0.0
+
         # Completion notification tracking
         self._completion_notified: bool = False
         self._rate_limited: bool = False
@@ -1185,6 +1192,7 @@ class TransferManager:
         except (FileNotFoundError, PermissionError):
             return []
         rate_limit_count = 0
+        now = time.time()
         for line in err_tail.split("\n"):
             if "ERROR" in line and "Errors:" not in line:
                 m = RE_ERROR_MSG.search(line)
@@ -1199,17 +1207,128 @@ class TransferManager:
                     ):
                         rate_limit_count += 1
                         self._rate_limited = True
+                        # Track timestamp for time-window throttle
+                        ts_m = RE_TIMESTAMP.search(line)
+                        if ts_m:
+                            self._rate_limit_timestamps.append(now)
+                            self._last_rate_limit_time = now
                         continue
                     if msg not in error_msgs:
                         error_msgs.append(msg)
+
+        # Prune old timestamps (keep only last 60 seconds)
+        self._rate_limit_timestamps = [t for t in self._rate_limit_timestamps if now - t < 60]
+
+        # B3: Auto-throttle when 3+ rate limit errors in 60s window
+        if len(self._rate_limit_timestamps) >= 3 and self.is_rclone_running():
+            self._apply_rate_limit_throttle()
+
+        # B3: Gradual restore after 5 minutes of no rate limit errors
+        if (
+            self._throttle_active
+            and self._last_rate_limit_time > 0
+            and now - self._last_rate_limit_time > 300
+            and self.is_rclone_running()
+        ):
+            self._restore_transfers_gradual()
+
         if self._rate_limited:
-            summary = (
-                f"Rate limited by provider ({rate_limit_count} occurrences). "
-                "Speed automatically reduced."
-            )
+            if self._throttle_active:
+                summary = (
+                    f"Speed reduced - cloud provider rate limit detected "
+                    f"({rate_limit_count} occurrences)."
+                )
+            else:
+                summary = (
+                    f"Rate limited by provider ({rate_limit_count} occurrences). "
+                    "Speed automatically reduced."
+                )
             error_msgs.insert(0, summary)
             logger.warning("Rate limit detected (%d occurrences)", rate_limit_count)
         return error_msgs[-5:]
+
+    def _apply_rate_limit_throttle(self) -> None:
+        """Reduce rclone --transfers when rate limiting is detected."""
+        if self._current_transfers <= 1:
+            return
+        if not self._original_transfers:
+            # Capture original transfers from the rclone command
+            for arg in self.rclone_cmd:
+                if arg.startswith("--transfers="):
+                    try:
+                        self._original_transfers = int(arg.split("=")[1])
+                    except (ValueError, IndexError):
+                        self._original_transfers = 8
+                    break
+            if not self._original_transfers:
+                self._original_transfers = 8
+            self._current_transfers = self._original_transfers
+
+        new_transfers = max(1, self._current_transfers // 2)
+        if new_transfers == self._current_transfers:
+            return
+
+        logger.warning(
+            "Proton Drive rate limit detected: %d errors in 60s, reducing transfers %d -> %d",
+            len(self._rate_limit_timestamps),
+            self._current_transfers,
+            new_transfers,
+        )
+        self._current_transfers = new_transfers
+        self._throttle_active = True
+        self._set_transfers_rc(new_transfers)
+
+    def _restore_transfers_gradual(self) -> None:
+        """Gradually restore transfers after rate limit subsides."""
+        if self._current_transfers >= self._original_transfers:
+            self._throttle_active = False
+            return
+
+        new_transfers = self._current_transfers + 1
+        logger.info(
+            "Rate limit quiet for 5m, restoring transfers %d -> %d (original: %d)",
+            self._current_transfers,
+            new_transfers,
+            self._original_transfers,
+        )
+        self._current_transfers = new_transfers
+        self._last_rate_limit_time = time.time()  # Reset timer for next increment
+        self._set_transfers_rc(new_transfers)
+
+        if self._current_transfers >= self._original_transfers:
+            self._throttle_active = False
+            logger.info("Transfers fully restored to %d", self._original_transfers)
+
+    def _set_transfers_rc(self, transfers: int) -> None:
+        """Change rclone's concurrent transfers via RC API."""
+        try:
+            rc_cmd = [
+                "rclone",
+                "rc",
+                "options/set",
+                "--json",
+                json.dumps({"main": {"Transfers": transfers}}),
+            ]
+            if self._rc_user and self._rc_pass and self._rc_port:
+                rc_cmd.extend(
+                    [
+                        f"--rc-user={self._rc_user}",
+                        f"--rc-pass={self._rc_pass}",
+                        f"--rc-addr=127.0.0.1:{self._rc_port}",
+                    ]
+                )
+            result = subprocess.run(
+                rc_cmd,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                logger.info("Transfers changed to %d via RC API", transfers)
+            else:
+                logger.debug("RC API transfers change failed: %s", result.stderr.strip())
+        except Exception as e:
+            logger.debug("RC API transfers change error: %s", e)
 
     def parse_current(self) -> Dict[str, Any]:
         """Return a snapshot of current transfer state for the dashboard.
@@ -1464,32 +1583,45 @@ class TransferManager:
 
         # B1: ETA smoothing via exponential moving average
         raw_speed = result.get("speed")
-        if raw_speed and not result.get("finished"):
-            sm = RE_SPEED.match(raw_speed)
-            if sm:
-                v = float(sm.group(1))
-                u = sm.group(2).upper()
-                if u.startswith("K"):
-                    v /= 1024
-                elif u.startswith("G"):
-                    v *= 1024
-                speed_bytes_per_sec = v * 1024 * 1024
-                if speed_bytes_per_sec > 0:
-                    if self._speed_ema == 0:
-                        self._speed_ema = speed_bytes_per_sec
-                    else:
-                        self._speed_ema = (
-                            self._ema_alpha * speed_bytes_per_sec
-                            + (1 - self._ema_alpha) * self._speed_ema
+        if not result.get("finished"):
+            if raw_speed:
+                sm = RE_SPEED.match(raw_speed)
+                if sm:
+                    v = float(sm.group(1))
+                    u = sm.group(2).upper()
+                    if u.startswith("K"):
+                        v /= 1024
+                    elif u.startswith("G"):
+                        v *= 1024
+                    speed_bytes_per_sec = v * 1024 * 1024
+                    if speed_bytes_per_sec > 0:
+                        if self._speed_ema == 0:
+                            self._speed_ema = speed_bytes_per_sec
+                        else:
+                            self._speed_ema = (
+                                self._ema_alpha * speed_bytes_per_sec
+                                + (1 - self._ema_alpha) * self._speed_ema
+                            )
+                        remaining = result.get("global_total_bytes", 0) - result.get(
+                            "global_transferred_bytes", 0
                         )
-                    remaining = result.get("global_total_bytes", 0) - result.get(
-                        "global_transferred_bytes", 0
-                    )
-                    if remaining > 0 and self._speed_ema > 0:
-                        smoothed_eta_sec = remaining / self._speed_ema
-                        result["smoothed_eta"] = fmt_duration(smoothed_eta_sec)
-                        result["smoothed_eta_sec"] = smoothed_eta_sec
-                    result["smoothed_speed"] = fmt_bytes(self._speed_ema) + "/s"
+                        if remaining > 0 and self._speed_ema > 0:
+                            smoothed_eta_sec = remaining / self._speed_ema
+                            result["smoothed_eta"] = fmt_duration(smoothed_eta_sec)
+                            result["smoothed_eta_sec"] = smoothed_eta_sec
+                        else:
+                            result["smoothed_eta"] = "0s"
+                            result["smoothed_eta_sec"] = 0
+                        result["smoothed_speed"] = fmt_bytes(self._speed_ema) + "/s"
+                        logger.debug(
+                            "ETA calc: raw_speed=%.1f, smoothed=%.1f, eta=%s",
+                            speed_bytes_per_sec,
+                            self._speed_ema,
+                            result.get("smoothed_eta", "N/A"),
+                        )
+            if self._speed_ema == 0 and not result.get("smoothed_eta"):
+                result["smoothed_eta"] = "Calculating..."
+                result["smoothed_eta_sec"] = 0
 
         # Grace period: avoid false "Stopped" status while rclone RC is booting
         just_started = (
@@ -1820,6 +1952,9 @@ class TransferManager:
             return {"ok": False, "msg": "A transfer is already running"}
         self._completion_notified = False
         self._speed_ema = 0.0
+        self._rate_limit_timestamps = []
+        self._throttle_active = False
+        self._last_rate_limit_time = 0.0
 
         source: str = body.get("source", "")
         dest: str = body.get("dest", "")
@@ -1841,6 +1976,9 @@ class TransferManager:
         elif source_type == "protondrive" and transfers > 3:
             transfers = 3
             logger.info("Proton Drive source: capped transfers to %d", transfers)
+
+        self._original_transfers = transfers
+        self._current_transfers = transfers
 
         if not source or not dest:
             return {"ok": False, "msg": "Missing source or destination"}

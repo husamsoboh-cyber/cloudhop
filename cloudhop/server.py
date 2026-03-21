@@ -787,24 +787,30 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                         else:
                             size_str = f"{size_bytes / 1024:.0f} KiB"
 
-                        # B2: Estimate transfer duration
+                        # B2: Estimate transfer duration based on provider speeds
                         source_type = body.get("source_type", "")
                         dest_type = body.get("dest_type", "")
                         bw_limit_str = body.get("bw_limit", "")
+                        _PROVIDER_SPEEDS_MBS = {
+                            "local": 100,
+                            "sftp": 100,
+                            "drive": 10,
+                            "onedrive": 10,
+                            "protondrive": 3,
+                            "s3": 20,
+                            "b2": 20,
+                        }
                         if bw_limit_str:
                             try:
                                 bw_val = float(re.sub(r"[^0-9.]", "", bw_limit_str))
                                 speed_est = bw_val * 1024 * 1024
                             except (ValueError, TypeError):
                                 speed_est = 10 * 1024 * 1024
-                        elif dest_type == "protondrive" or source_type == "protondrive":
-                            speed_est = 2 * 1024 * 1024
-                        elif source_type == "local" and dest_type == "local":
-                            speed_est = 100 * 1024 * 1024
-                        elif source_type not in ("local",) and dest_type not in ("local",):
-                            speed_est = 5 * 1024 * 1024
                         else:
-                            speed_est = 10 * 1024 * 1024
+                            # Use the slower side as the bottleneck
+                            src_mbs = _PROVIDER_SPEEDS_MBS.get(source_type, 10)
+                            dst_mbs = _PROVIDER_SPEEDS_MBS.get(dest_type, 10)
+                            speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
                         est_sec = size_bytes / speed_est if speed_est > 0 else 0
                         if est_sec < 60:
                             est_dur = "less than a minute"
@@ -824,10 +830,12 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                                 est_dur += f" {eh} hour{'s' if eh != 1 else ''}"
 
                         file_count = data.get("count", 0)
+                        speed_label = f"{speed_est / (1024 * 1024):.0f} MB/s"
                         logger.info(
-                            "Preview scan: %d files, %s total",
-                            file_count,
+                            "Preview ETA estimate: %s for %s at %s",
+                            est_dur,
                             size_str,
+                            speed_label,
                         )
                         self._send_json(
                             {
@@ -837,6 +845,7 @@ class CloudHopHandler(http.server.BaseHTTPRequestHandler):
                                 "size_bytes": size_bytes,
                                 "estimated_duration": est_dur,
                                 "estimated_duration_sec": int(est_sec),
+                                "estimated_disclaimer": "Estimate based on typical speeds. Actual time may vary.",
                             }
                         )
                     else:

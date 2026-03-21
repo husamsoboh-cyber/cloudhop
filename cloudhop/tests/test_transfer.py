@@ -1401,19 +1401,25 @@ class TestCompletionNotification:
         manager.rclone_cmd = ["rclone", "copy", "/tmp/a", "/tmp/b"]
         manager._completion_notified = False
 
-        with patch.object(manager, "is_rclone_running", return_value=False), \
-             patch.object(manager, "parse_current", return_value={
-                 "global_files_done": 42,
-                 "global_transferred": "1.5 GiB",
-                 "global_pct": 100,
-                 "global_elapsed": "5m30s",
-                 "error_messages": [],
-             }), \
-             patch("cloudhop.transfer.notify") as mock_notify, \
-             patch.object(manager, "scan_full_log"), \
-             patch.object(manager, "_check_schedule"), \
-             patch.object(manager, "_check_battery"), \
-             patch("cloudhop.transfer.time.sleep", side_effect=StopIteration):
+        with (
+            patch.object(manager, "is_rclone_running", return_value=False),
+            patch.object(
+                manager,
+                "parse_current",
+                return_value={
+                    "global_files_done": 42,
+                    "global_transferred": "1.5 GiB",
+                    "global_pct": 100,
+                    "global_elapsed": "5m30s",
+                    "error_messages": [],
+                },
+            ),
+            patch("cloudhop.transfer.notify") as mock_notify,
+            patch.object(manager, "scan_full_log"),
+            patch.object(manager, "_check_schedule"),
+            patch.object(manager, "_check_battery"),
+            patch("cloudhop.transfer.time.sleep", side_effect=StopIteration),
+        ):
             try:
                 manager.background_scanner()
             except StopIteration:
@@ -1430,19 +1436,25 @@ class TestCompletionNotification:
         manager.rclone_cmd = ["rclone", "copy", "/tmp/a", "/tmp/b"]
         manager._completion_notified = False
 
-        with patch.object(manager, "is_rclone_running", return_value=False), \
-             patch.object(manager, "parse_current", return_value={
-                 "global_files_done": 5,
-                 "global_transferred": "100 MiB",
-                 "global_pct": 10,
-                 "global_elapsed": "1m",
-                 "error_messages": ["connection timeout"],
-             }), \
-             patch("cloudhop.transfer.notify") as mock_notify, \
-             patch.object(manager, "scan_full_log"), \
-             patch.object(manager, "_check_schedule"), \
-             patch.object(manager, "_check_battery"), \
-             patch("cloudhop.transfer.time.sleep", side_effect=StopIteration):
+        with (
+            patch.object(manager, "is_rclone_running", return_value=False),
+            patch.object(
+                manager,
+                "parse_current",
+                return_value={
+                    "global_files_done": 5,
+                    "global_transferred": "100 MiB",
+                    "global_pct": 10,
+                    "global_elapsed": "1m",
+                    "error_messages": ["connection timeout"],
+                },
+            ),
+            patch("cloudhop.transfer.notify") as mock_notify,
+            patch.object(manager, "scan_full_log"),
+            patch.object(manager, "_check_schedule"),
+            patch.object(manager, "_check_battery"),
+            patch("cloudhop.transfer.time.sleep", side_effect=StopIteration),
+        ):
             try:
                 manager.background_scanner()
             except StopIteration:
@@ -1458,13 +1470,15 @@ class TestCompletionNotification:
         manager.rclone_cmd = ["rclone", "copy", "/tmp/a", "/tmp/b"]
         manager._completion_notified = True  # Already notified
 
-        with patch.object(manager, "is_rclone_running", return_value=False), \
-             patch.object(manager, "parse_current") as mock_parse, \
-             patch("cloudhop.transfer.notify") as mock_notify, \
-             patch.object(manager, "scan_full_log"), \
-             patch.object(manager, "_check_schedule"), \
-             patch.object(manager, "_check_battery"), \
-             patch("cloudhop.transfer.time.sleep", side_effect=StopIteration):
+        with (
+            patch.object(manager, "is_rclone_running", return_value=False),
+            patch.object(manager, "parse_current") as mock_parse,
+            patch("cloudhop.transfer.notify") as mock_notify,
+            patch.object(manager, "scan_full_log"),
+            patch.object(manager, "_check_schedule"),
+            patch.object(manager, "_check_battery"),
+            patch("cloudhop.transfer.time.sleep", side_effect=StopIteration),
+        ):
             try:
                 manager.background_scanner()
             except StopIteration:
@@ -1472,3 +1486,195 @@ class TestCompletionNotification:
 
             mock_notify.assert_not_called()
             mock_parse.assert_not_called()
+
+
+# ===========================================================================
+# B1: ETA Smoothing (Exponential Moving Average)
+# ===========================================================================
+
+
+class TestETASmoothing:
+    def test_ema_first_measurement_uses_raw_speed(self, manager_with_log):
+        """First speed measurement should set smoothed_speed = raw speed."""
+        m = manager_with_log
+        m._speed_ema = 0.0  # No history
+        m.rclone_pid = 99999
+        with patch("os.waitpid", return_value=(0, 0)):
+            result = m.parse_current()
+        # After parsing FAKE_LOG, EMA should be set (not zero)
+        assert m._speed_ema > 0
+        assert "smoothed_speed" in result
+
+    def test_ema_smoothing_reduces_fluctuations(self, tmp_path):
+        """EMA should smooth out speed spikes - verify with fluctuating data."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m._ema_alpha = 0.3
+
+        # Simulate: feed a series of fluctuating speeds
+        raw_speeds = [10.0, 100.0, 5.0, 80.0, 8.0]  # MB/s, wildly varying
+        smoothed_values = []
+        for speed_mbs in raw_speeds:
+            speed_bps = speed_mbs * 1024 * 1024
+            if m._speed_ema == 0:
+                m._speed_ema = speed_bps
+            else:
+                m._speed_ema = 0.3 * speed_bps + 0.7 * m._speed_ema
+            smoothed_values.append(m._speed_ema / (1024 * 1024))
+
+        # Smoothed values should have less variance than raw speeds
+        raw_range = max(raw_speeds) - min(raw_speeds)
+        smoothed_range = max(smoothed_values) - min(smoothed_values)
+        assert smoothed_range < raw_range, "EMA should reduce fluctuation range"
+
+    def test_ema_calculating_when_no_speed(self, tmp_path):
+        """When no speed data available, smoothed_eta should be 'Calculating...'."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m.log_file = str(tmp_path / "empty.log")
+        # Log with stats but no speed/ETA line
+        with open(m.log_file, "w") as f:
+            f.write(
+                textwrap.dedent("""\
+                2025/06/10 10:00:00 INFO  :
+                Transferred:            5 / 100, 5%
+                Errors:                 0
+                Elapsed time:      30.5s
+            """)
+            )
+        m.rclone_pid = 99999
+        with patch("os.waitpid", return_value=(0, 0)):
+            result = m.parse_current()
+        assert result.get("smoothed_eta") == "Calculating..."
+
+    def test_ema_not_shown_when_finished(self, manager_with_log):
+        """When transfer is finished, smoothed_eta should not be 'Calculating...'."""
+        m = manager_with_log
+        m.rclone_pid = None  # Simulate finished
+        result = m.parse_current()
+        assert result.get("smoothed_eta") != "Calculating..."
+
+    def test_ema_reset_on_new_transfer(self, tmp_path):
+        """_speed_ema should reset to 0 when starting a new transfer."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m._speed_ema = 50000.0  # Simulated leftover value
+        body = {
+            "source": str(tmp_path),
+            "dest": str(tmp_path / "dest"),
+            "source_type": "local",
+            "dest_type": "local",
+        }
+        os.makedirs(tmp_path / "dest", exist_ok=True)
+        with patch("subprocess.Popen", side_effect=OSError("test")):
+            m.start_transfer(body)
+        assert m._speed_ema == 0.0
+
+
+# ===========================================================================
+# B3: Proton Drive Rate Limit Auto-Throttle
+# ===========================================================================
+
+
+class TestRateLimitThrottle:
+    def test_rate_limit_detection_with_429_errors(self, tmp_path):
+        """429 errors in rclone log should be detected as rate limiting."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m.log_file = str(tmp_path / "test.log")
+        log_content = "\n".join(
+            [
+                f"2025/06/10 10:00:{i:02d} ERROR : file{i}.txt: 429 Too Many Requests"
+                for i in range(5)
+            ]
+        )
+        with open(m.log_file, "w") as f:
+            f.write(log_content)
+        errors = m._parse_error_messages()
+        assert m._rate_limited is True
+        assert any("rate limit" in e.lower() or "429" in e for e in errors)
+
+    def test_throttle_triggers_on_3_errors_in_60s(self, tmp_path):
+        """When 3+ rate limit errors occur in 60s, transfers should be reduced."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m.rclone_cmd = ["rclone", "copy", "/src", "/dst", "--transfers=8"]
+        m._original_transfers = 8
+        m._current_transfers = 8
+        m.rclone_pid = 99999
+
+        # Simulate 3 rate limit timestamps within 60 seconds
+        now = time.time()
+        m._rate_limit_timestamps = [now - 30, now - 20, now - 10]
+
+        with (
+            patch.object(m, "is_rclone_running", return_value=True),
+            patch.object(m, "_set_transfers_rc") as mock_rc,
+        ):
+            m._apply_rate_limit_throttle()
+
+        assert m._current_transfers == 4  # 8 // 2 = 4
+        assert m._throttle_active is True
+        mock_rc.assert_called_once_with(4)
+
+    def test_throttle_minimum_is_1(self, tmp_path):
+        """Throttling should never go below 1 transfer."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m.rclone_cmd = ["rclone", "copy", "/src", "/dst", "--transfers=2"]
+        m._original_transfers = 2
+        m._current_transfers = 2
+
+        now = time.time()
+        m._rate_limit_timestamps = [now - 10, now - 5, now - 1]
+
+        with (
+            patch.object(m, "is_rclone_running", return_value=True),
+            patch.object(m, "_set_transfers_rc"),
+        ):
+            m._apply_rate_limit_throttle()
+            assert m._current_transfers == 1
+
+            # Should not throttle further below 1
+            m._apply_rate_limit_throttle()
+            assert m._current_transfers == 1
+
+    def test_gradual_restore_after_5_minutes(self, tmp_path):
+        """After 5 minutes of no rate limiting, transfers should increment by 1."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m._original_transfers = 8
+        m._current_transfers = 2
+        m._throttle_active = True
+        m._last_rate_limit_time = time.time() - 301  # 5+ minutes ago
+
+        with (
+            patch.object(m, "is_rclone_running", return_value=True),
+            patch.object(m, "_set_transfers_rc") as mock_rc,
+        ):
+            m._restore_transfers_gradual()
+
+        assert m._current_transfers == 3  # 2 + 1
+        assert m._throttle_active is True  # Still active (not back to 8 yet)
+        mock_rc.assert_called_once_with(3)
+
+    def test_throttle_deactivates_when_fully_restored(self, tmp_path):
+        """Throttle flag should clear when transfers reach original value."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m._original_transfers = 3
+        m._current_transfers = 2
+        m._throttle_active = True
+        m._last_rate_limit_time = time.time() - 301
+
+        with (
+            patch.object(m, "is_rclone_running", return_value=True),
+            patch.object(m, "_set_transfers_rc"),
+        ):
+            m._restore_transfers_gradual()
+
+        assert m._current_transfers == 3
+        assert m._throttle_active is False
+
+    def test_dashboard_message_when_throttled(self, tmp_path):
+        """Dashboard should show 'Speed reduced' message when throttle is active."""
+        m = TransferManager(cm_dir=str(tmp_path))
+        m.log_file = str(tmp_path / "test.log")
+        m._throttle_active = True
+        log_content = "2025/06/10 10:00:00 ERROR : file.txt: 429 Too Many Requests\n"
+        with open(m.log_file, "w") as f:
+            f.write(log_content)
+        errors = m._parse_error_messages()
+        assert any("speed reduced" in e.lower() for e in errors)

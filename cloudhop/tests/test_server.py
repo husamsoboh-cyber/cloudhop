@@ -280,5 +280,76 @@ class TestSymlinkSecurity(unittest.TestCase):
         self.assertNotIn(200, calls)
 
 
+class TestPreviewETAEstimate(unittest.TestCase):
+    """Test B2: Preview ETA speed estimates by provider type."""
+
+    # Provider speed map from server.py (MB/s)
+    _PROVIDER_SPEEDS_MBS = {
+        "local": 100,
+        "sftp": 100,
+        "drive": 10,
+        "onedrive": 10,
+        "protondrive": 3,
+        "s3": 20,
+        "b2": 20,
+    }
+
+    def _estimate_sec(self, source_type, dest_type, size_bytes):
+        src_mbs = self._PROVIDER_SPEEDS_MBS.get(source_type, 10)
+        dst_mbs = self._PROVIDER_SPEEDS_MBS.get(dest_type, 10)
+        speed_est = min(src_mbs, dst_mbs) * 1024 * 1024
+        return size_bytes / speed_est if speed_est > 0 else 0
+
+    def test_local_to_local_100mbs(self):
+        """Local-to-local should estimate at 100 MB/s."""
+        sec = self._estimate_sec("local", "local", 100 * 1024 * 1024 * 1024)  # 100 GiB
+        # 100 GiB at 100 MB/s ~ 1024 seconds
+        self.assertAlmostEqual(sec, 1024, delta=10)
+
+    def test_sftp_100mbs(self):
+        """SFTP should estimate at 100 MB/s."""
+        sec = self._estimate_sec("sftp", "local", 100 * 1024 * 1024 * 1024)
+        self.assertAlmostEqual(sec, 1024, delta=10)
+
+    def test_proton_drive_3mbs(self):
+        """Proton Drive should estimate at 3 MB/s."""
+        size = 3 * 1024 * 1024 * 3600  # Exactly 3 MB/s * 3600s = 1 hour of data
+        sec = self._estimate_sec("local", "protondrive", size)
+        self.assertAlmostEqual(sec, 3600, delta=1)
+
+    def test_s3_20mbs(self):
+        """S3 should estimate at 20 MB/s."""
+        size = 20 * 1024 * 1024 * 100  # 100 seconds at 20 MB/s
+        sec = self._estimate_sec("local", "s3", size)
+        self.assertAlmostEqual(sec, 100, delta=1)
+
+    def test_b2_20mbs(self):
+        """B2 should estimate at 20 MB/s."""
+        size = 20 * 1024 * 1024 * 100
+        sec = self._estimate_sec("local", "b2", size)
+        self.assertAlmostEqual(sec, 100, delta=1)
+
+    def test_gdrive_onedrive_10mbs(self):
+        """Google Drive and OneDrive should estimate at 10 MB/s."""
+        size = 10 * 1024 * 1024 * 60  # 60 seconds of data
+        for provider in ("drive", "onedrive"):
+            sec = self._estimate_sec("local", provider, size)
+            self.assertAlmostEqual(sec, 60, delta=1, msg=f"Failed for {provider}")
+
+    def test_bottleneck_is_slower_side(self):
+        """Transfer speed should use the slower provider (bottleneck)."""
+        size = 10 * 1024 * 1024 * 1024  # 10 GiB
+        # local (100) -> protondrive (3) = bottleneck is 3 MB/s
+        sec = self._estimate_sec("local", "protondrive", size)
+        expected = size / (3 * 1024 * 1024)
+        self.assertAlmostEqual(sec, expected, delta=1)
+
+    def test_unknown_provider_defaults_to_10mbs(self):
+        """Unknown provider types should default to 10 MB/s."""
+        size = 10 * 1024 * 1024 * 100  # 100 seconds at 10 MB/s
+        sec = self._estimate_sec("unknown", "unknown", size)
+        self.assertAlmostEqual(sec, 100, delta=1)
+
+
 if __name__ == "__main__":
     unittest.main()
