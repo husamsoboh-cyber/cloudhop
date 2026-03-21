@@ -55,7 +55,8 @@ def _load() -> Dict[str, Any]:
 def _save(settings: Dict[str, Any]) -> None:
     """Write settings to disk atomically."""
     tmp = _SETTINGS_FILE + ".tmp"
-    with open(tmp, "w") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(settings, f, indent=2)
     os.replace(tmp, _SETTINGS_FILE)
 
@@ -92,9 +93,15 @@ def save_settings(data: Dict[str, Any]) -> Dict[str, Any]:
     if len(host) > 255:
         return {"ok": False, "msg": "SMTP host too long (max 255 chars)"}
 
+    # Validate SMTP host for CRLF injection
+    if "\r" in host or "\n" in host:
+        return {"ok": False, "msg": "Invalid characters in SMTP host"}
+
     # Validate email addresses
     for field in ("email_from", "email_to"):
         val = str(data.get(field, ""))
+        if "\r" in val or "\n" in val:
+            return {"ok": False, "msg": f"Invalid characters in {field}"}
         if val and ("@" not in val or "." not in val):
             return {"ok": False, "msg": f"Invalid email address for {field}"}
 
@@ -112,6 +119,17 @@ def save_settings(data: Dict[str, Any]) -> Dict[str, Any]:
         settings = {k: merged[k] for k in defaults}
         # Coerce port to int
         settings["email_smtp_port"] = port
+
+        for bool_key in (
+            "email_smtp_tls",
+            "email_enabled",
+            "email_on_complete",
+            "email_on_failure",
+        ):
+            val = settings.get(bool_key)
+            if isinstance(val, str):
+                settings[bool_key] = val.lower() in ("true", "1", "yes")
+                logger.debug("Coerced %s from string to bool", bool_key)
 
         _save(settings)
 

@@ -100,6 +100,40 @@ def test_save_valid_settings():
     assert result["ok"] is True
 
 
+def test_unknown_key_email_smtp_username_not_saved(_isolate_settings):
+    """F101: backend filters unknown keys; email_smtp_username must be ignored."""
+    save_settings({"email_smtp_username": "user@example.com"})
+    settings = load_settings_with_secrets()
+    assert "email_smtp_username" not in settings
+
+
+def test_email_username_saved(_isolate_settings):
+    """F101: the correct key email_username is saved."""
+    save_settings({"email_username": "user@example.com"})
+    settings = load_settings_with_secrets()
+    assert settings["email_username"] == "user@example.com"
+
+
+def test_boolean_coercion(_isolate_settings):
+    """F107: string booleans are coerced to Python bool."""
+    save_settings({"email_smtp_tls": "false", "email_enabled": "true"})
+    settings = load_settings_with_secrets()
+    assert settings["email_smtp_tls"] is False
+    assert settings["email_enabled"] is True
+
+
+def test_crlf_in_email_from():
+    """F203: CRLF in email_from is rejected."""
+    result = save_settings({"email_from": "a@b.com\r\nBcc: x@y.com"})
+    assert result["ok"] is False
+
+
+def test_crlf_in_smtp_host():
+    """F203: CRLF in SMTP host is rejected."""
+    result = save_settings({"email_smtp_host": "smtp.evil.com\r\nX-Injected: true"})
+    assert result["ok"] is False
+
+
 def test_atomic_write_uses_tmp(_isolate_settings):
     """Verify that save uses os.replace for atomic writes."""
     real_replace = os.replace

@@ -27,7 +27,7 @@ function loadSettings() {
       document.getElementById('smtpTls').checked = data.email_smtp_tls !== false;
       document.getElementById('emailFrom').value = data.email_from || '';
       document.getElementById('emailTo').value = data.email_to || '';
-      document.getElementById('smtpUsername').value = data.email_smtp_username || '';
+      document.getElementById('smtpUsername').value = data.email_username || '';
       document.getElementById('smtpPassword').value = '';
       document.getElementById('onComplete').checked = data.email_on_complete !== false;
       document.getElementById('onFailure').checked = data.email_on_failure !== false;
@@ -44,7 +44,7 @@ function saveSettings() {
     email_smtp_tls: document.getElementById('smtpTls').checked,
     email_from: document.getElementById('emailFrom').value,
     email_to: document.getElementById('emailTo').value,
-    email_smtp_username: document.getElementById('smtpUsername').value,
+    email_username: document.getElementById('smtpUsername').value,
     email_on_complete: document.getElementById('onComplete').checked,
     email_on_failure: document.getElementById('onFailure').checked,
   };
@@ -71,7 +71,7 @@ function testEmail() {
     email_smtp_tls: document.getElementById('smtpTls').checked,
     email_from: document.getElementById('emailFrom').value,
     email_to: document.getElementById('emailTo').value,
-    email_smtp_username: document.getElementById('smtpUsername').value,
+    email_username: document.getElementById('smtpUsername').value,
   };
   var pw = document.getElementById('smtpPassword').value;
   if (pw) body.email_password = pw;
