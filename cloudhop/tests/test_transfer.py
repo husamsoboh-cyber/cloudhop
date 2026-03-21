@@ -1901,9 +1901,10 @@ class TestCrashBackoffSuccessNoCount:
 class TestConfigFlagRejected:
     def test_config_flag_rejected(self):
         """--config flag must be rejected by validate_rclone_cmd."""
-        assert validate_rclone_cmd(
-            ["rclone", "copy", "src:", "dst:", "--config=/tmp/evil.conf"]
-        ) is False
+        assert (
+            validate_rclone_cmd(["rclone", "copy", "src:", "dst:", "--config=/tmp/evil.conf"])
+            is False
+        )
 
 
 # ===========================================================================
