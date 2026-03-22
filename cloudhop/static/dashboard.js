@@ -535,13 +535,14 @@ async function refresh() {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
-      ['sessionBadge','btnPause2','btnResume2','btnCancel2','btnNewTransfer2'].forEach(id => {
+      ['sessionBadge','btnCancel2','btnNewTransfer2'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       });
       { const cb = document.getElementById('controlBar'); if (cb) cb.style.display = 'flex'; }
       updateStatusDot('active');
       setText('statusText', 'Starting...');
+      updateButtons(true);
       return;
     }
 
@@ -1141,13 +1142,11 @@ async function doAction(action) {
 function updateButtons(isRunning) {
   const btnPause2 = document.getElementById('btnPause2');
   const btnResume2 = document.getElementById('btnResume2');
-  if (isRunning) {
-    if (btnPause2) btnPause2.style.display = '';
-    if (btnResume2) btnResume2.style.display = 'none';
-  } else {
-    if (btnPause2) btnPause2.style.display = 'none';
-    if (btnResume2) btnResume2.style.display = '';
-  }
+  const showPause = isRunning;
+  const showResume = !isRunning;
+  if (btnPause2) btnPause2.style.display = showPause ? '' : 'none';
+  if (btnResume2) btnResume2.style.display = showResume ? '' : 'none';
+  console.log('[F312] Button state: pause=%s, resume=%s', showPause, showResume);
 }
 
 // Favicon with progress
