@@ -643,6 +643,90 @@ footer {
   .providers-inner { padding: 24px; }
   .provider-logos { gap: 18px; }
 }
+
+/* ════════════════════════════════════════════
+   MCP Integration Section
+   ════════════════════════════════════════════ */
+.mcp-section {
+  padding: 80px 24px;
+  position: relative; z-index: 1;
+}
+.mcp-inner {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 48px;
+}
+.mcp-text {
+  flex: 1;
+  min-width: 0;
+}
+.mcp-text .section-label { color: var(--cyan); }
+.mcp-text h2 {
+  font-size: clamp(24px, 3.5vw, 34px);
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+  line-height: 1.2;
+}
+.mcp-text p {
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.7;
+  margin-bottom: 20px;
+}
+.mcp-text .mcp-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--cyan);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+.mcp-text .mcp-link:hover { opacity: 0.8; }
+.mcp-conversation {
+  flex: 0 0 320px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 20px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.mcp-msg {
+  padding: 8px 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.mcp-msg:last-child { margin-bottom: 0; }
+.mcp-msg.user {
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.15);
+  color: var(--text-bright);
+}
+.mcp-msg.assistant {
+  background: rgba(6,182,212,0.07);
+  border: 1px solid rgba(6,182,212,0.12);
+  color: var(--text);
+}
+.mcp-msg-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  font-family: var(--font);
+  font-weight: 600;
+}
+@media (max-width: 768px) {
+  .mcp-inner { flex-direction: column; gap: 32px; }
+  .mcp-conversation { flex: none; width: 100%; max-width: 400px; }
+}
 </style>
 </head>
 <body>
@@ -770,6 +854,41 @@ footer {
         <div class="feature-icon green">&#x2709;</div>
         <h3>Email Alerts</h3>
         <p>Get notified by email when transfers complete or fail. Configure SMTP in the built-in settings page.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── MCP Integration ── -->
+<section class="mcp-section">
+  <div class="container">
+    <div class="mcp-inner">
+      <div class="mcp-text">
+        <div class="section-label">MCP Integration</div>
+        <h2>Talk to your clouds</h2>
+        <p>CloudHop ships with an MCP server that connects it to Claude. Control transfers, browse remotes, and check progress through natural language.</p>
+        <a href="https://github.com/husamsoboh-cyber/cloudhop-mcp" target="_blank" class="mcp-link">
+          View on GitHub
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+        </a>
+      </div>
+      <div class="mcp-conversation">
+        <div class="mcp-msg user">
+          <div class="mcp-msg-label">You</div>
+          Copy my OneDrive photos to Google Drive
+        </div>
+        <div class="mcp-msg assistant">
+          <div class="mcp-msg-label">Claude</div>
+          Started transfer: OneDrive:/Photos &rarr; GDrive:/Photos. 1,204 files, ~8.3 GB. I'll let you know when it's done.
+        </div>
+        <div class="mcp-msg user">
+          <div class="mcp-msg-label">You</div>
+          How's it going?
+        </div>
+        <div class="mcp-msg assistant">
+          <div class="mcp-msg-label">Claude</div>
+          72% complete, 6.0 GB transferred. ETA ~4 minutes.
+        </div>
       </div>
     </div>
   </div>
