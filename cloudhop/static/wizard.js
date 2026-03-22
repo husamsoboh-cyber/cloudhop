@@ -316,6 +316,8 @@ async function goTo(step) {
       document.querySelectorAll('#sourceGrid .provider-card').forEach(c => c.classList.remove('selected'));
       sc.classList.add('selected');
     }
+    // F321: Restore tab order for source providers
+    if (sc) _updateProviderTabOrder('sourceGrid', sc);
     document.getElementById('sourceLocalPath').classList.toggle('show', sourceProvider === 'local' || sourceProvider === 'icloud');
     document.getElementById('sourceOtherName').classList.toggle('show', sourceProvider === 'other');
     if (sourceProvider === 'local' || sourceProvider === 'icloud') {
@@ -332,6 +334,8 @@ async function goTo(step) {
       document.querySelectorAll('#destGrid .provider-card').forEach(c => c.classList.remove('selected'));
       dc.classList.add('selected');
     }
+    // F321: Restore tab order for dest providers
+    if (dc) _updateProviderTabOrder('destGrid', dc);
     document.getElementById('destLocalPath').classList.toggle('show', destProvider === 'local' || destProvider === 'icloud');
     document.getElementById('destOtherName').classList.toggle('show', destProvider === 'other');
     if (destProvider === 'local' || destProvider === 'icloud') {
@@ -368,6 +372,8 @@ async function goTo(step) {
     });
     var mw = document.getElementById('modeWarning');
     if (mw) mw.style.display = selectedMode === 'sync' ? 'block' : 'none';
+    // F321: Ensure collapsed advanced options are out of tab order
+    _updateAdvancedTabOrder();
   }
 
   currentStep = step;
@@ -395,6 +401,8 @@ function toggleAdvanced() {
     const arrow = document.getElementById('advArrow');
     content.classList.toggle('open');
     arrow.classList.toggle('open');
+    // F321: Update tab order for advanced options based on visibility
+    _updateAdvancedTabOrder();
 }
 
 // Schedule toggle
@@ -458,6 +466,32 @@ function toggleAdvanced() {
   } catch(e) {}
 })();
 
+// F321: Update tab order for a provider grid after selection
+function _updateProviderTabOrder(gridId, selectedCard) {
+  document.querySelectorAll('#' + gridId + ' .provider-card').forEach(c => {
+    if (c === selectedCard) {
+      c.setAttribute('tabindex', '0');
+    } else {
+      c.setAttribute('tabindex', '-1');
+    }
+  });
+  console.log('[F321] Tab order updated: active provider=%s', selectedCard.dataset.provider);
+}
+
+// F321: Manage tab order for advanced options based on collapsed/expanded state
+function _updateAdvancedTabOrder() {
+  const content = document.getElementById('advancedContent');
+  if (!content) return;
+  const isOpen = content.classList.contains('open');
+  content.querySelectorAll('input, select, button, [tabindex]').forEach(el => {
+    if (isOpen) {
+      el.removeAttribute('tabindex');
+    } else {
+      el.setAttribute('tabindex', '-1');
+    }
+  });
+}
+
 // Source selection
 function selectSource(card) {
   document.querySelectorAll('#sourceGrid .provider-card').forEach(c => c.classList.remove('selected'));
@@ -465,6 +499,9 @@ function selectSource(card) {
   sourceProvider = card.dataset.provider;
   sourceDisplayName = card.dataset.name;
   sourceName = providerKeys[sourceProvider] || sourceProvider;
+
+  // F321: Remove unselected providers from tab order
+  _updateProviderTabOrder('sourceGrid', card);
 
   // F301: Clear subfolder when source type changes to prevent stale values
   const srcSubEl = document.getElementById('sourceSubfolder');
@@ -489,6 +526,8 @@ function selectSource(card) {
         document.getElementById('sourceNext').disabled = !input.value.trim();
       });
     }
+    // F321: Auto-focus the relevant input
+    input.focus();
   } else if (sourceProvider === 'local' || sourceProvider === 'icloud') {
     const input = document.getElementById('sourcePathInput');
     document.getElementById('sourceNext').disabled = !input.value.trim();
@@ -498,8 +537,12 @@ function selectSource(card) {
         document.getElementById('sourceNext').disabled = !input.value.trim();
       });
     }
+    // F321: Auto-focus the path input
+    input.focus();
   } else {
     document.getElementById('sourceNext').disabled = false;
+    // F321: Auto-focus the Next button for cloud providers (no input needed)
+    document.getElementById('sourceNext').focus();
   }
 }
 
@@ -514,6 +557,9 @@ function selectDest(card) {
   if (destProvider === sourceProvider && sourceProvider !== 'local') {
     destName = sourceName + '_dest';
   }
+
+  // F321: Remove unselected providers from tab order
+  _updateProviderTabOrder('destGrid', card);
 
   document.getElementById('destLocalPath').classList.toggle('show', destProvider === 'local' || destProvider === 'icloud');
   document.getElementById('destOtherName').classList.toggle('show', destProvider === 'other');
@@ -533,6 +579,8 @@ function selectDest(card) {
         document.getElementById('destNext').disabled = !input.value.trim();
       });
     }
+    // F321: Auto-focus the relevant input
+    input.focus();
   } else if (destProvider === 'local' || destProvider === 'icloud') {
     const input = document.getElementById('destPathInput');
     document.getElementById('destNext').disabled = !input.value.trim();
@@ -542,8 +590,12 @@ function selectDest(card) {
         document.getElementById('destNext').disabled = !input.value.trim();
       });
     }
+    // F321: Auto-focus the path input
+    input.focus();
   } else {
     document.getElementById('destNext').disabled = false;
+    // F321: Auto-focus the Next button for cloud providers
+    document.getElementById('destNext').focus();
   }
   // Show "Add another destination" button when a dest is selected
   const addBtn = document.getElementById('addDestBtn');
